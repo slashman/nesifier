@@ -1,0 +1,44 @@
+{
+  "name": "nesifier",
+  "version": "1.0.0",
+  "description": "Convert any image into a strict NES background (256x240, 4 palettes, 16x16 attributes, <=256 tiles)",
+  "keywords": [
+    "nes",
+    "retro",
+    "image",
+    "processing",
+    "filters"
+  ],
+  "homepage": "https://github.com/slashman/nesifier#readme",
+  "bugs": {
+    "url": "https://github.com/slashman/nesifier/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/slashman/nesifier.git"
+  },
+  "license": "MIT",
+  "author": "slashie <slash@slashware.net>",
+  "type": "module",
+  "main": "index.js",
+  "bin": {
+    "nesifier": "./bin/nesifier.js"
+  },
+  "directories": {
+    "test": "test"
+  },
+  "files": [
+    "bin",
+    "src"
+  ],
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  },
+  "dependencies": {
+    "sharp": "^0.34.5"
+  },
+  "devDependencies": {},
+  "engines": {
+    "node": ">=18.3"
+  }
+}
