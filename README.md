@@ -1,115 +1,221 @@
 # nesifier
 
-Convert any image into a **strict NES background**: something the PPU can actually
-display from a single nametable with no mid-frame palette changes.
+Turn any image into a real NES background: a screen the console can actually display,
+with the NES's own limits on colors, palettes and tiles. You get a preview PNG, the raw
+graphics data for NES development, or a `.nes` ROM that shows the image in any emulator.
+
+Requires Node.js 22.2 or newer.
+
+## Quick start
 
 ```sh
-npm install
-node bin/nesifier.js photo.jpg -s 3              # -> photo.nes.png (768x720 preview)
-node bin/nesifier.js photo.jpg -d fs -e out/pic  # + out/pic.chr .nam .pal .json
-node bin/nesifier.js photo.jpg -r photo.nes      # a ROM that shows the image
-node bin/nesifier.js photo.jpg -s 3 --aspect 4:3 --scanlines   # CRT-style preview
-node bin/nesifier.js photo.jpg --warp 4:3 --aspect 4:3 -s 3     # undistorted on a 4:3 TV
-node bin/nesifier.js check some-image.png        # verify an existing image
-npm link                                         # optional: install the `nesifier` command
+npx nesifier photo.jpg
 ```
 
-## Constraints enforced
+This writes `photo.nes.png`, the 256×240 screen exactly as the NES would draw it. Add
+`-s 3` for a bigger preview:
 
-| Rule | Value |
-|---|---|
-| Resolution | 256 × 240 |
-| Tiles / map | 8 × 8 tiles, 32 × 30 nametable |
-| Tile patterns | ≤ 256 unique, no flipping (only exact repeats are free) |
-| Palettes | 4 background palettes × 4 entries |
-| Universal background | entry 0 of every palette is the same color (no transparency) |
-| Total colors | ≤ 13 (1 shared + 3 per palette) |
-| Attribute granularity | one palette per 16 × 16 area (2 × 2 tiles) |
-| Colors | only the 52 usable NES colors (NTSC approximation, see `src/nes.js`) |
+```sh
+npx nesifier photo.jpg -s 3
+```
 
-Every conversion ends by running the independent verifier (`src/verify.js`) on the
-rendered result, and the CLI exits non-zero if any rule is broken.
+To use the `nesifier` command without `npx`, install it globally:
 
-## How it works
+```sh
+npm install -g nesifier
+```
 
-1. **Fit**: resize to 256×240 with sharp (`--fit cover|contain|fill`).
-2. **Palettes**: each 16×16 block is summarized as a histogram over NES colors in
-   CIELAB. For each candidate universal background color, blocks are clustered into 4
-   groups (k-means style), and each group's 3 colors are found by **exhaustive search**
-   over all C(51,3) triples. The background with the lowest total error wins.
-3. **Pixels**: each pixel picks from its block's 4 colors, optionally with ordered
-   (Bayer 4×4) or Floyd–Steinberg dithering that stays within each block's palette.
-4. **Tiles**: if there are more than 256 unique 8×8 patterns, cells are clustered into
-   ≤ 256 patterns. Error is measured *through each cell's own palette*, so one pattern
-   can serve cells that use different palettes.
-5. **Render**: the preview is rebuilt from nametable → pattern → palette, exactly as
-   the hardware would draw it.
+## Recipes
+
+```sh
+# Make a ROM you can open in an emulator or put on a flash cart
+npx nesifier photo.jpg -r photo.nes
+
+# Preview it the way a CRT TV showed it
+npx nesifier photo.jpg -s 3 --aspect 4:3 --scanlines
+
+# Keep proportions right on a TV (the NES stretches pixels horizontally)
+npx nesifier photo.jpg --warp 4:3 --aspect 4:3 -s 3
+
+# Dither for smoother gradients
+npx nesifier photo.jpg -d fs
+
+# Punch up a soft photo before converting
+npx nesifier photo.jpg --saturation 1.5
+
+# Pixel art: keep hard edges and show the whole image
+npx nesifier sprite-sheet.png --resample nearest --fit contain
+
+# Export graphics data for your own NES project
+npx nesifier photo.jpg -e out/title     # out/title.chr .nam .pal .json
+
+# Leave 32 tiles free for a font or HUD
+npx nesifier photo.jpg --max-tiles 224 -e out/title
+
+# Check whether an image already follows the NES rules
+npx nesifier check image.png
+```
 
 ## Options
 
 ```
--o, --output <file>       preview PNG (default: <input>.nes.png)
--s, --scale <n>           nearest-neighbor upscale for the preview
-    --aspect <mode>       square | ntsc (8:7 pixels, 293 px wide) | 4:3 (320 px wide)
-    --scanlines           darken the last line of every NES line (forces --scale >= 2)
-    --scanline-strength   0..1, how dark the scanlines are (default 0.5)
--e, --export <base>       write <base>.chr .nam .pal .json
--r, --rom <file>          write a .nes ROM that displays the image
-    --fit <mode>          cover | contain | fill (default cover)
-    --resample <kernel>   lanczos3 | nearest | cubic | mitchell (nearest for pixel art)
-    --fill <#hex>         padding color for --fit contain
-    --warp <mode>         ntsc | 4:3: pre-squeeze the image so it looks right once the
-                          display stretches it (default square = no correction)
-    --saturation <n>      pre-boost saturation (photos often look better at 1.3–1.6)
-    --brightness <n>      brightness multiplier
--d, --dither <mode>       none | ordered | fs
-    --strength <0..1>     dither strength (default 0.75)
-    --bg <#hex>           force the universal background color
-    --bg-candidates <n>   background colors to try (default 6)
-    --max-tiles <n>       tile budget ≤ 256 (lower it to leave room for text/fonts)
--q, --quiet
+nesifier <input> [options]
+nesifier check <image>
 ```
 
-## Export formats
+**Output**
 
-- `.chr`: 4096 bytes, 256 tiles × 16 bytes (bitplane 0, then bitplane 1). Unused tiles are zero.
-- `.nam`: 1024 bytes, 960 tile indices followed by the 64-byte attribute table.
-- `.pal`: 16 bytes for `$3F00–$3F0F` (PPU color indices; entry 0 of each palette repeats the universal color).
-- `.json`: palettes as hex and `$xx` PPU indices.
+| Option | Description |
+|---|---|
+| `-o, --output <file>` | Preview PNG path. Default: `<input>.nes.png` |
+| `-s, --scale <n>` | Enlarge the preview with sharp pixels (1–16) |
+| `--aspect <mode>` | Preview shape: `square` (default), `ntsc` (8:7 pixels) or `4:3` (TV frame) |
+| `--scanlines` | Darken alternate lines like a CRT. Sets `--scale` to at least 2 |
+| `--scanline-strength <0..1>` | How dark the scanlines are. Default 0.5 |
+| `-r, --rom <file>` | Write a `.nes` ROM that displays the image |
+| `-e, --export <base>` | Write `<base>.chr`, `.nam`, `.pal` and `.json` |
 
-These load directly into tools like NEXXT/NES Screen Tool, or `.incbin` into a ROM.
+**Fitting the image**
 
-`--rom` writes a 24 KB iNES file (NROM / mapper 0: 16 KB program, 8 KB tile graphics)
-that runs in any emulator or on a flash cart. Its startup code waits for the PPU, copies
-the palettes and nametable, and turns the background on. The tests boot it in an
-emulator (jsnes) and compare the drawn frame with the preview pixel by pixel. Colors
-still vary by emulator, and many TVs and emulators hide the outer 8 pixels (overscan).
+| Option | Description |
+|---|---|
+| `--fit <mode>` | `cover` crops to fill the screen (default), `contain` shows the whole image with padding, `fill` stretches |
+| `--fill <#hex>` | Padding color for `--fit contain`. Default `#000000` |
+| `--warp <mode>` | `ntsc` or `4:3`: pre-squeeze the image so it looks undistorted once a TV stretches it |
+| `--resample <kernel>` | `lanczos3` (default, photos), `nearest` (pixel art), `cubic`, `mitchell` |
+| `--saturation <n>` | Saturation multiplier before converting. Photos often look better at 1.3–1.6 |
+| `--brightness <n>` | Brightness multiplier before converting |
 
-## Library use
+**Conversion**
+
+| Option | Description |
+|---|---|
+| `-d, --dither <mode>` | `none` (default), `ordered` (pattern) or `fs` (Floyd–Steinberg) |
+| `--strength <0..1>` | Dither strength. Default 0.75 |
+| `--bg <#hex>` | Force the shared background color |
+| `--bg-candidates <n>` | How many background colors to try. Default 6 |
+| `--max-tiles <n>` | Tile budget, up to 256. Lower it to leave room for other graphics |
+| `-q, --quiet` | Only print errors |
+
+`--scale`, `--aspect` and `--scanlines` only change the preview PNG. The ROM and exported
+data are always the plain 256×240 screen.
+
+## What you get
+
+**Preview PNG.** The screen as the NES draws it. Without `--scale`, `--aspect` or
+`--scanlines`, it is pixel-exact and passes `nesifier check`.
+
+**ROM (`-r`).** A 24 KB `.nes` file (NROM, mapper 0) that shows the image and waits.
+It runs in emulators such as Mesen and FCEUX, and on flash carts. Colors vary a little
+between emulators, and many emulators and TVs hide the outer 8 pixels (overscan).
+
+**Graphics data (`-e`).** Standard NES formats you can load into tools like NEXXT or
+NES Screen Tool, or include in a ROM build with `.incbin`:
+
+| File | Size | Contents |
+|---|---|---|
+| `.chr` | 4096 bytes | 256 tiles × 16 bytes (bitplane 0, then bitplane 1). Unused tiles are empty |
+| `.nam` | 1024 bytes | 960 tile numbers followed by the 64-byte attribute table |
+| `.pal` | 16 bytes | Background palettes for PPU `$3F00–$3F0F`, as NES color numbers |
+| `.json` | | The palettes as hex colors and `$xx` NES color numbers |
+
+## Checking an image
+
+```sh
+npx nesifier check image.png
+```
+
+`check` reports every rule an image breaks and exits with status 1, or prints the
+palettes and exits with 0 if the image is valid. Images made by nesifier store their
+palette arrangement in the PNG, so `check` can verify them exactly. For images from other
+tools, `check` has to search for an arrangement. If it can't find one within the tile
+limit, it says so, but the image may still be valid.
+
+## Using it as a library
 
 ```js
-import { loadImage, nesify, savePng } from 'nesifier';
+import { loadImage, nesify, savePng, toChr, toNametable, toPal, toRom } from 'nesifier';
+import { writeFile } from 'node:fs/promises';
 
-const result = nesify(await loadImage('photo.jpg', { warp: '4:3' }), { dither: 'fs' });
-await savePng(result.rgb, 'photo.nes.png', { layout: result.layout });
+const screen = await loadImage('photo.jpg', { warp: '4:3' });
+const result = nesify(screen, { dither: 'fs' });
+
+await savePng(result.rgb, 'photo.nes.png', { scale: 3, layout: result.layout });
+
+const chr = toChr(result.tiles);
+const nam = toNametable(result.nametable, result.assign);
+const pal = toPal(result.palettes);
+await writeFile('photo.nes', toRom(chr, nam, pal));
 ```
 
-Pass `layout` so the PNG records its palette arrangement; without it `nesifier check`
-has to search for one and may not find it.
+| Function | Description |
+|---|---|
+| `loadImage(input, options)` | Load a file path or Buffer and fit it to 256×240. Options: `fit`, `kernel`, `fill`, `warp`, `saturation`, `brightness`. Returns RGB bytes |
+| `nesify(rgb, options)` | Convert 256×240 RGB bytes. Options: `dither`, `strength`, `bg`, `bgCandidates`, `maxTiles`. Returns `{ rgb, tiles, nametable, palettes, assign, layout }` |
+| `savePng(rgb, path, options)` | Write the preview. Options: `scale`, `aspect`, `scanlines`, `layout` |
+| `toChr(tiles)`, `toNametable(nametable, assign)`, `toPal(palettes)` | Encode the NES data files |
+| `toJson(palettes, tileCount)` | Palettes as hex colors and NES color numbers |
+| `toRom(chr, nam, pal)` | Build a `.nes` ROM |
+| `verify(rgb, width, height, layout?)` | Check an image against the rules. Returns `{ ok, errors, stats }` |
+| `NES_COLORS` | The 52 usable colors: `{ nes, hex, rgb }` |
 
-## Notes
+Pass `layout: result.layout` to `savePng` so the PNG records its palette arrangement for
+`nesifier check`.
 
-- NES pixels are not square: TVs stretch the 256×240 screen horizontally (8:7 per pixel
-  on NTSC, or roughly a 4:3 frame overall). Plain fitting makes circles look 14–25%
-  too wide on a TV. `--warp` fits the source to the displayed shape and squeezes it into
-  256×240, so the exported data looks undistorted in an emulator with aspect correction or
-  on a real TV. The raw 256×240 PNG will look squeezed; preview with the matching `--aspect`.
-- Scrolling is a runtime feature; the output is one full nametable that you can scroll.
-- Dithering creates many unique tiles, so tile reduction will smooth some of it out.
-- `--scale`, `--aspect` and `--scanlines` only change the preview PNG. Leave them off
-  for a pixel-exact 256×240 screen that passes `check`.
-- Preview PNGs carry the palette layout in a `nesifier-layout` text chunk. `check`
-  verifies the image against it, so it never makes an invalid image pass. Without that chunk
-  (other tools, or editors that strip metadata) `check` has to search for an
-  arrangement itself, and a tile-count failure then means "none found", not "impossible".
-- Hex values follow one common NTSC palette; real hardware and emulators vary.
+## The NES rules it follows
+
+| Rule | Limit |
+|---|---|
+| Screen | 256 × 240 pixels |
+| Tiles | 8 × 8 pixels, in a 32 × 30 map |
+| Unique tiles | At most 256. Tiles can't be flipped, so only exact repeats are free |
+| Palettes | 4 background palettes of 4 colors |
+| Background color | One color shared by all 4 palettes, with no transparency |
+| Colors on screen | At most 13 (1 shared + 3 per palette) |
+| Palette areas | Each 16 × 16 area uses one palette |
+| Colors | 52 usable NES colors (a common NTSC approximation) |
+
+Every conversion is checked against these rules before nesifier reports success.
+
+## How it works
+
+1. **Fit** the image to 256×240.
+2. **Choose palettes.** For several candidate background colors, group the screen's
+   240 palette areas into 4 palettes, and find each palette's best 3 colors by trying
+   every combination. Keep the background color that matches the image best.
+3. **Map pixels** to their area's 4 colors, with optional dithering that stays inside
+   each area's palette.
+4. **Reduce tiles.** Photos usually start with 500–700 unique tiles, so similar tiles
+   are merged until at most 256 remain, judging each tile by how it looks in its own
+   palette.
+5. **Rebuild** the screen from the tiles and palettes, exactly as the NES draws it.
+
+## Tips and limits
+
+- **TV proportions.** NES pixels aren't square: TVs stretch the screen horizontally
+  (8:7 per pixel on NTSC, about 4:3 overall). Without `--warp`, circles look 14–25% too
+  wide on a TV. With `--warp`, the plain 256×240 PNG looks squeezed; preview with the
+  matching `--aspect` to see the result.
+- **Photos lose color.** The NES palette is sparse, so soft or muted photos come out
+  greyish. Try `--saturation 1.5`.
+- **Dithering costs tiles.** Dithered areas create many unique tiles, and merging them
+  back down to 256 smooths some of the dithering out.
+- **Colors vary.** There's no single official NES palette; emulators and TVs differ.
+- **Scrolling** is something a game does at runtime. nesifier makes one full screen.
+
+## Development
+
+```sh
+git clone https://github.com/slashman/nesifier.git
+cd nesifier
+npm install
+npm test
+node bin/nesifier.js photo.jpg -s 3
+```
+
+The tests include booting generated ROMs in an emulator (jsnes) and comparing the frame
+with the preview pixel by pixel.
+
+## License
+
+MIT

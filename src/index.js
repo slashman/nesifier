@@ -7,6 +7,12 @@ import { renderIndices, blockOf } from './render.js';
 import { reduceTiles } from './tiles.js';
 import { embedText } from './pngtext.js';
 
+// Public API: everything a library user needs is importable from 'nesifier'.
+export { toChr, toNametable, toPal, toJson } from './export.js';
+export { toRom } from './rom.js';
+export { verify } from './verify.js';
+export { NES_COLORS } from './nes.js';
+
 export const LAYOUT_KEY = 'nesifier-layout';
 
 // Horizontal stretch factors for showing the 256x240 screen the way a TV did.

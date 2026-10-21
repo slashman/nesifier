@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { parseArgs } from 'node:util';
-import { writeFile } from 'node:fs/promises';
+import { writeFile, mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import sharp from 'sharp';
 import { readFile } from 'node:fs/promises';
@@ -162,6 +162,9 @@ async function runConvert(input) {
 
   const json = toJson(result.palettes, result.tiles.length);
   const { layout } = result;
+  // Create missing folders for every output, e.g. `-e out/title`.
+  for (const file of [output, values.export, values.rom].filter(Boolean))
+    await mkdir(path.dirname(file), { recursive: true });
   const size = await savePng(result.rgb, output, { scale, aspect, scanlines, layout });
   log(`Wrote ${output} (${size.width}x${size.height})`);
 
