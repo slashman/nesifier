@@ -77,6 +77,18 @@ rendered result, and the CLI exits non-zero if any rule is broken.
 
 These load directly into tools like NEXXT/NES Screen Tool, or `.incbin` into a ROM.
 
+## Library use
+
+```js
+import { loadImage, nesify, savePng } from 'nesifier';
+
+const result = nesify(await loadImage('photo.jpg', { warp: '4:3' }), { dither: 'fs' });
+await savePng(result.rgb, 'photo.nes.png', { layout: result.layout });
+```
+
+Pass `layout` so the PNG records its palette arrangement; without it `nesifier check`
+has to search for one and may not find it.
+
 ## Notes
 
 - NES pixels are not square: TVs stretch the 256×240 screen horizontally (8:7 per pixel

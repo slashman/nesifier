@@ -124,3 +124,17 @@ test('--warp pre-squeezes so the stretched display is undistorted', async () => 
     assert.ok(ratio(await loadImage(svg, { fit }), ASPECTS['4:3']) > 1.2, 'unwarped circle widens on a 4:3 TV');
   }
 });
+
+test('library output with result.layout passes check exactly', async () => {
+  const { savePng, LAYOUT_KEY } = await import('../src/index.js');
+  const { readText } = await import('../src/pngtext.js');
+  const { readFile } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const r = nesify(await loadImage(await noisyImage()));
+  const file = join(tmpdir(), `nesifier-layout-${process.pid}.png`);
+  await savePng(r.rgb, file, { layout: r.layout });
+  const layout = JSON.parse(readText(await readFile(file), LAYOUT_KEY));
+  assert.deepEqual(layout, r.layout);
+  assert.deepEqual(verify(r.rgb, SCREEN_W, SCREEN_H, layout).errors, []);
+});

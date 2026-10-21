@@ -158,7 +158,7 @@ async function runConvert(input) {
   });
 
   const json = toJson(result.palettes, result.tiles.length);
-  const layout = { palettes: json.palettes.map((p) => p.map((c) => c.hex)), assign: [...result.assign] };
+  const { layout } = result;
   const size = await savePng(result.rgb, output, { scale, aspect, scanlines, layout });
   log(`Wrote ${output} (${size.width}x${size.height})`);
 

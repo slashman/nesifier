@@ -80,7 +80,9 @@ export function nesify(rgb, opts = {}) {
       out.set(NES_COLORS[palettes[assign[blockOf(x, y)]][v]].rgb, (y * SCREEN_W + x) * 3);
     }
   }
-  return { rgb: out, palettes, assign, tiles, nametable, uniqueBefore, reduced };
+  // Palette arrangement as hex colors, for savePng to embed so `nesifier check` can verify it.
+  const layout = { palettes: palettes.map((p) => p.map((c) => NES_COLORS[c].hex)), assign: [...assign] };
+  return { rgb: out, palettes, assign, tiles, nametable, uniqueBefore, reduced, layout };
 }
 
 /**
