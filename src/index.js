@@ -1,9 +1,13 @@
+import { writeFile } from 'node:fs/promises';
 import sharp from 'sharp';
 import { NES_COLORS, SCREEN_W, SCREEN_H, TILE, MAP_W, MAX_TILES, hexToRgb } from './nes.js';
 import { labOf } from './color.js';
 import { choosePalettes, nearestNes } from './palettes.js';
 import { renderIndices, blockOf } from './render.js';
 import { reduceTiles } from './tiles.js';
+import { embedText } from './pngtext.js';
+
+export const LAYOUT_KEY = 'nesifier-layout';
 
 export async function loadImage(input, { fit = 'cover', kernel = 'lanczos3', fill = '#000000', saturation = 1, brightness = 1 } = {}) {
   const { data } = await sharp(input)
@@ -44,8 +48,14 @@ export function nesify(rgb, opts = {}) {
   return { rgb: out, palettes, assign, tiles, nametable, uniqueBefore, reduced };
 }
 
-export async function savePng(rgb, path, scale = 1) {
+/**
+ * Write the preview PNG. A `layout` ({ palettes, assign }) is embedded as a tEXt chunk
+ * for `nesifier check`.
+ */
+export async function savePng(rgb, path, scale = 1, layout = null) {
   let img = sharp(Buffer.from(rgb), { raw: { width: SCREEN_W, height: SCREEN_H, channels: 3 } });
   if (scale > 1) img = img.resize(SCREEN_W * scale, SCREEN_H * scale, { kernel: 'nearest' });
-  await img.png({ palette: false }).toFile(path);
+  let png = await img.png({ palette: false }).toBuffer();
+  if (layout) png = embedText(png, LAYOUT_KEY, JSON.stringify(layout));
+  await writeFile(path, png);
 }

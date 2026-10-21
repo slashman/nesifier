@@ -77,3 +77,12 @@ test('verify rejects a raw photo-like image', async () => {
   assert.match(v.errors.join('\n'), /not in the NES palette/);
   assert.equal(verify(rgb, 320, 200).ok, false);
 });
+
+test('embedded layout survives a PNG round trip', async () => {
+  const { embedText, readText } = await import('../src/pngtext.js');
+  const png = await sharp({ create: { width: 2, height: 2, channels: 3, background: '#000' } }).png().toBuffer();
+  const tagged = embedText(png, 'nesifier-layout', '{"a":1}');
+  assert.equal(readText(tagged, 'nesifier-layout'), '{"a":1}');
+  assert.equal(readText(png, 'nesifier-layout'), null);
+  await sharp(tagged).raw().toBuffer(); // still a valid PNG
+});

@@ -3,7 +3,9 @@ import { parseArgs } from 'node:util';
 import { writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import sharp from 'sharp';
-import { loadImage, nesify, savePng } from '../src/index.js';
+import { readFile } from 'node:fs/promises';
+import { loadImage, nesify, savePng, LAYOUT_KEY } from '../src/index.js';
+import { readText } from '../src/pngtext.js';
 import { verify } from '../src/verify.js';
 import { toChr, toNametable, toPal, toJson } from '../src/export.js';
 import { NES_COLORS } from '../src/nes.js';
@@ -88,9 +90,25 @@ function report(result) {
   }
 }
 
+function parseLayout(text) {
+  try {
+    const l = JSON.parse(text);
+    const hexOk = (c) => typeof c === 'string' && /^#[0-9A-F]{6}$/.test(c);
+    if (l.palettes.length === 4 && l.palettes.every((p) => p.length === 4 && p.every(hexOk)) &&
+        l.assign.length === 240 && l.assign.every((a) => Number.isInteger(a) && a >= 0 && a < 4)) return l;
+  } catch {}
+  return null;
+}
+
 async function runCheck(file) {
-  const { data, info } = await sharp(file).removeAlpha().raw().toBuffer({ resolveWithObject: true });
-  const result = verify(new Uint8Array(data), info.width, info.height);
+  const buf = await readFile(file);
+  const { data, info } = await sharp(buf).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+  const pixels = new Uint8Array(data);
+  // Our own PNGs carry their palette layout. It is verified, not trusted, and if it is
+  // stale (image edited afterwards) we fall back to deriving one from the pixels.
+  const layout = parseLayout(readText(buf, LAYOUT_KEY));
+  let result = layout && verify(pixels, info.width, info.height, layout);
+  if (!result?.ok) result = verify(pixels, info.width, info.height);
   report(result);
   if (result.ok && result.stats.palettes)
     result.stats.palettes.forEach((p, i) => log(`  palette ${i}: ${p.map((c) => c ?? '(any)').join(' ')}`));
@@ -118,7 +136,9 @@ async function runConvert(input) {
     maxTiles: num('max-tiles', { min: 1, max: 256, int: true }),
   });
 
-  await savePng(result.rgb, output, scale);
+  const json = toJson(result.palettes, result.tiles.length);
+  const layout = { palettes: json.palettes.map((p) => p.map((c) => c.hex)), assign: [...result.assign] };
+  await savePng(result.rgb, output, scale, layout);
   log(`Wrote ${output}${scale > 1 ? ` (${scale}x)` : ''}`);
 
   if (values.export) {
@@ -132,16 +152,12 @@ async function runConvert(input) {
     log(`Wrote ${base}.chr, ${base}.nam, ${base}.pal, ${base}.json`);
   }
 
-  const json = toJson(result.palettes, result.tiles.length);
   log(`Universal background: ${json.universalBackground.hex} (${json.universalBackground.nes})`);
   json.palettes.forEach((p, i) => log(`  palette ${i}: ${p.map((c) => `${c.hex} ${c.nes}`).join('  ')}`));
   log(`Tiles: ${result.tiles.length}${result.reduced ? ` (reduced from ${result.uniqueBefore} unique)` : ''}`);
 
   // Self-check the rendered screen against the rules, independent of the converter.
-  const check = verify(result.rgb, 256, 240, {
-    palettes: json.palettes.map((p) => p.map((c) => c.hex)),
-    assign: result.assign,
-  });
+  const check = verify(result.rgb, 256, 240, layout);
   report(check);
   log(`Done in ${((performance.now() - t0) / 1000).toFixed(2)}s`);
   if (!check.ok) process.exit(1);

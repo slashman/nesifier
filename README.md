@@ -74,7 +74,8 @@ These load directly into tools like NEXXT/NES Screen Tool, or `.incbin` into a R
 
 - Scrolling is a runtime feature; the output is one full nametable that you can scroll.
 - Dithering creates many unique tiles, so tile reduction will smooth some of it out.
-- `check` derives palettes from the image. On very tight images it may fail to find an
-  arrangement that a smarter packing would allow, so treat a tile-count failure from
-  `check` as "probably", not "certainly".
+- Preview PNGs carry the palette layout in a `nesifier-layout` text chunk. `check`
+  verifies the image against it, so it never makes an invalid image pass. Without that chunk
+  (other tools, or editors that strip metadata) `check` has to search for an
+  arrangement itself, and a tile-count failure then means "none found", not "impossible".
 - Hex values follow one common NTSC palette; real hardware and emulators vary.

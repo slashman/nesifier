@@ -36,6 +36,63 @@ function packPalettes(sets) {
 }
 
 /**
+ * Hill-climb toward fewer unique tiles: an area whose colors fit several palettes can
+ * switch between them, and each palette's color order can change. Pattern reference
+ * counts make each move cheap to evaluate.
+ */
+function refineLayout(px, bg, pals, sets, palIdx, startPerm, PERMS) {
+  const assign = [...palIdx];
+  const perm = startPerm.map((m) => [...m]);
+  const options = sets.map((s) => pals.map((_, p) => p).filter((p) => s.every((c) => pals[p].includes(c))));
+  const tilesOf = (b) => {
+    const tx = (b % BLOCKS_W) * 2, ty = ((b / BLOCKS_W) | 0) * 2;
+    return [ty * MAP_W + tx, ty * MAP_W + tx + 1, (ty + 1) * MAP_W + tx, (ty + 1) * MAP_W + tx + 1];
+  };
+  const key = Buffer.alloc(64);
+  const keyFor = (t, p) => {
+    const tx = t % MAP_W, ty = (t / MAP_W) | 0, m = perm[p];
+    for (let i = 0; i < 64; i++) {
+      const c = px[(ty * TILE + (i >> 3)) * SCREEN_W + tx * TILE + (i & 7)];
+      key[i] = c === bg ? 0 : m[pals[p].indexOf(c) + 1];
+    }
+    return key.toString('latin1');
+  };
+  const counts = new Map();
+  const add = (b) => { for (const t of tilesOf(b)) { const k = keyFor(t, assign[b]); counts.set(k, (counts.get(k) || 0) + 1); } };
+  const remove = (b) => {
+    for (const t of tilesOf(b)) {
+      const k = keyFor(t, assign[b]), n = counts.get(k) - 1;
+      if (n) counts.set(k, n); else counts.delete(k);
+    }
+  };
+  const blocks = sets.map((_, b) => b);
+  blocks.forEach(add);
+
+  for (let round = 0, improved = true; improved && counts.size > MAX_TILES && round < 50; round++) {
+    improved = false;
+    for (const b of blocks) {
+      for (const p of options[b]) {
+        if (p === assign[b]) continue;
+        const before = counts.size, old = assign[b];
+        remove(b); assign[b] = p; add(b);
+        if (counts.size < before) improved = true;
+        else { remove(b); assign[b] = old; add(b); }
+      }
+    }
+    for (let p = 0; p < pals.length; p++) {
+      const members = blocks.filter((b) => assign[b] === p);
+      for (const next of PERMS) {
+        const before = counts.size, old = perm[p];
+        members.forEach(remove); perm[p] = next; members.forEach(add);
+        if (counts.size < before) improved = true;
+        else { members.forEach(remove); perm[p] = old; members.forEach(add); }
+      }
+    }
+  }
+  return { count: counts.size, perm };
+}
+
+/**
  * Check an RGB image against strict NES background rules. Tile patterns depend on the
  * order of colors inside each palette, so callers that know the real arrangement can
  * pass `layout` = { palettes: [[#hex x4] x4], assign: block -> palette } to count them
@@ -132,8 +189,14 @@ export function verify(rgb, width, height, layout = null) {
       if (patterns.size < best.count) best = { count: patterns.size, perm };
       if (best.count <= MAX_TILES) break;
     }
+    if (!layout && best.count > MAX_TILES) best = refineLayout(px, bg, pals, sets, palIdx, best.perm, PERMS);
     tileCount = best.count;
-    if (tileCount > MAX_TILES) errors.push(`${tileCount} unique 8x8 tile patterns, maximum is ${MAX_TILES}`);
+    if (tileCount > MAX_TILES) {
+      errors.push(layout
+        ? `${tileCount} unique 8x8 tile patterns, maximum is ${MAX_TILES}`
+        : `No palette arrangement found with <= ${MAX_TILES} unique tiles (best: ${tileCount}); ` +
+          'the image may still be valid with a different arrangement');
+    }
     solution.palettes = pals.map((p, i) => {
       const ordered = [null, null, null];
       p.forEach((c, j) => { ordered[best.perm[i][j + 1] - 1] = hex(c); });
