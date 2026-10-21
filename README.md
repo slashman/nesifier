@@ -7,6 +7,8 @@ display from a single nametable with no mid-frame palette changes.
 npm install
 node bin/nesifier.js photo.jpg -s 3              # -> photo.nes.png (768x720 preview)
 node bin/nesifier.js photo.jpg -d fs -e out/pic  # + out/pic.chr .nam .pal .json
+node bin/nesifier.js photo.jpg -s 3 --aspect 4:3 --scanlines   # CRT-style preview
+node bin/nesifier.js photo.jpg --warp 4:3 --aspect 4:3 -s 3     # undistorted on a 4:3 TV
 node bin/nesifier.js check some-image.png        # verify an existing image
 npm link                                         # optional: install the `nesifier` command
 ```
@@ -47,10 +49,15 @@ rendered result, and the CLI exits non-zero if any rule is broken.
 ```
 -o, --output <file>       preview PNG (default: <input>.nes.png)
 -s, --scale <n>           nearest-neighbor upscale for the preview
+    --aspect <mode>       square | ntsc (8:7 pixels, 293 px wide) | 4:3 (320 px wide)
+    --scanlines           darken the last line of every NES line (forces --scale >= 2)
+    --scanline-strength   0..1, how dark the scanlines are (default 0.5)
 -e, --export <base>       write <base>.chr .nam .pal .json
     --fit <mode>          cover | contain | fill (default cover)
     --resample <kernel>   lanczos3 | nearest | cubic | mitchell (nearest for pixel art)
     --fill <#hex>         padding color for --fit contain
+    --warp <mode>         ntsc | 4:3: pre-squeeze the image so it looks right once the
+                          display stretches it (default square = no correction)
     --saturation <n>      pre-boost saturation (photos often look better at 1.3–1.6)
     --brightness <n>      brightness multiplier
 -d, --dither <mode>       none | ordered | fs
@@ -72,8 +79,15 @@ These load directly into tools like NEXXT/NES Screen Tool, or `.incbin` into a R
 
 ## Notes
 
+- NES pixels are not square: TVs stretch the 256×240 screen horizontally (8:7 per pixel
+  on NTSC, or roughly a 4:3 frame overall). Plain fitting makes circles look 14–25%
+  too wide on a TV. `--warp` fits the source to the displayed shape and squeezes it into
+  256×240, so the exported data looks undistorted in an emulator with aspect correction or
+  on a real TV. The raw 256×240 PNG will look squeezed; preview with the matching `--aspect`.
 - Scrolling is a runtime feature; the output is one full nametable that you can scroll.
 - Dithering creates many unique tiles, so tile reduction will smooth some of it out.
+- `--scale`, `--aspect` and `--scanlines` only change the preview PNG. Leave them off
+  for a pixel-exact 256×240 screen that passes `check`.
 - Preview PNGs carry the palette layout in a `nesifier-layout` text chunk. `check`
   verifies the image against it, so it never makes an invalid image pass. Without that chunk
   (other tools, or editors that strip metadata) `check` has to search for an

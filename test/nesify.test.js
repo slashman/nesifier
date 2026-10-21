@@ -78,6 +78,24 @@ test('verify rejects a raw photo-like image', async () => {
   assert.equal(verify(rgb, 320, 200).ok, false);
 });
 
+test('CRT preview options change only the preview PNG', async () => {
+  const { savePng } = await import('../src/index.js');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const rgb = new Uint8Array(SCREEN_W * SCREEN_H * 3).fill(200);
+  const file = join(tmpdir(), `nesifier-test-${process.pid}.png`);
+
+  const size = await savePng(rgb, file, { scale: 3, aspect: '4:3', scanlines: 0.5 });
+  assert.deepEqual(size, { width: 960, height: 720 });
+  const { data, info } = await sharp(file).raw().toBuffer({ resolveWithObject: true });
+  assert.equal(info.width, 960);
+  const row = (y) => data[(y * info.width + 100) * info.channels];
+  assert.equal(row(0), 200);
+  assert.equal(row(2), 100); // last line of each NES scanline is darkened
+
+  assert.deepEqual(await savePng(rgb, file, { aspect: 'ntsc' }), { width: 293, height: 240 });
+});
+
 test('embedded layout survives a PNG round trip', async () => {
   const { embedText, readText } = await import('../src/pngtext.js');
   const png = await sharp({ create: { width: 2, height: 2, channels: 3, background: '#000' } }).png().toBuffer();
@@ -85,4 +103,24 @@ test('embedded layout survives a PNG round trip', async () => {
   assert.equal(readText(tagged, 'nesifier-layout'), '{"a":1}');
   assert.equal(readText(png, 'nesifier-layout'), null);
   await sharp(tagged).raw().toBuffer(); // still a valid PNG
+});
+
+test('--warp pre-squeezes so the stretched display is undistorted', async () => {
+  const svg = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600">' +
+    '<rect width="800" height="600" fill="#000"/><circle cx="400" cy="300" r="250" fill="#fff"/></svg>');
+  const ratio = (rgb, k) => {
+    let x0 = Infinity, x1 = -1, y0 = Infinity, y1 = -1;
+    for (let y = 0; y < SCREEN_H; y++) for (let x = 0; x < SCREEN_W; x++) {
+      if (rgb[(y * SCREEN_W + x) * 3] > 128) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); }
+    }
+    return ((x1 - x0 + 1) * k) / (y1 - y0 + 1); // width as the TV shows it
+  };
+  const { ASPECTS } = await import('../src/index.js');
+  for (const fit of ['contain', 'cover']) {
+    for (const warp of ['ntsc', '4:3']) {
+      const rgb = await loadImage(svg, { fit, warp });
+      assert.ok(Math.abs(ratio(rgb, ASPECTS[warp]) - 1) < 0.02, `${fit}/${warp} circle should stay round`);
+    }
+    assert.ok(ratio(await loadImage(svg, { fit }), ASPECTS['4:3']) > 1.2, 'unwarped circle widens on a 4:3 TV');
+  }
 });
