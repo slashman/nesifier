@@ -7,6 +7,7 @@ display from a single nametable with no mid-frame palette changes.
 npm install
 node bin/nesifier.js photo.jpg -s 3              # -> photo.nes.png (768x720 preview)
 node bin/nesifier.js photo.jpg -d fs -e out/pic  # + out/pic.chr .nam .pal .json
+node bin/nesifier.js photo.jpg -r photo.nes      # a ROM that shows the image
 node bin/nesifier.js photo.jpg -s 3 --aspect 4:3 --scanlines   # CRT-style preview
 node bin/nesifier.js photo.jpg --warp 4:3 --aspect 4:3 -s 3     # undistorted on a 4:3 TV
 node bin/nesifier.js check some-image.png        # verify an existing image
@@ -53,6 +54,7 @@ rendered result, and the CLI exits non-zero if any rule is broken.
     --scanlines           darken the last line of every NES line (forces --scale >= 2)
     --scanline-strength   0..1, how dark the scanlines are (default 0.5)
 -e, --export <base>       write <base>.chr .nam .pal .json
+-r, --rom <file>          write a .nes ROM that displays the image
     --fit <mode>          cover | contain | fill (default cover)
     --resample <kernel>   lanczos3 | nearest | cubic | mitchell (nearest for pixel art)
     --fill <#hex>         padding color for --fit contain
@@ -76,6 +78,12 @@ rendered result, and the CLI exits non-zero if any rule is broken.
 - `.json`: palettes as hex and `$xx` PPU indices.
 
 These load directly into tools like NEXXT/NES Screen Tool, or `.incbin` into a ROM.
+
+`--rom` writes a 24 KB iNES file (NROM / mapper 0: 16 KB program, 8 KB tile graphics)
+that runs in any emulator or on a flash cart. Its startup code waits for the PPU, copies
+the palettes and nametable, and turns the background on. The tests boot it in an
+emulator (jsnes) and compare the drawn frame with the preview pixel by pixel. Colors
+still vary by emulator, and many TVs and emulators hide the outer 8 pixels (overscan).
 
 ## Library use
 

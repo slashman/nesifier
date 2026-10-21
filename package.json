@@ -37,7 +37,9 @@
   "dependencies": {
     "sharp": "^0.34.5"
   },
-  "devDependencies": {},
+  "devDependencies": {
+    "jsnes": "^2.1.0"
+  },
   "engines": {
     "node": ">=22.2"
   }

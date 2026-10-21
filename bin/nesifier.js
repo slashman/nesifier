@@ -8,6 +8,7 @@ import { loadImage, nesify, savePng, ASPECTS, LAYOUT_KEY } from '../src/index.js
 import { readText } from '../src/pngtext.js';
 import { verify } from '../src/verify.js';
 import { toChr, toNametable, toPal, toJson } from '../src/export.js';
+import { toRom } from '../src/rom.js';
 import { NES_COLORS } from '../src/nes.js';
 
 const HELP = `nesifier - convert an image to a strict NES background
@@ -23,6 +24,7 @@ Output:
       --scanlines           darken alternate lines like a CRT (forces --scale >= 2)
       --scanline-strength <0..1>  how dark the scanlines are (default 0.5)
   -e, --export <base>       write <base>.chr, <base>.nam, <base>.pal, <base>.json
+  -r, --rom <file>          write a .nes ROM (NROM) that displays the image
 
 Image fitting:
       --fit <mode>          cover | contain | fill (default cover)
@@ -57,6 +59,7 @@ const { values, positionals } = parseArgs({
     scanlines: { type: 'boolean', default: false },
     'scanline-strength': { type: 'string', default: '0.5' },
     export: { type: 'string', short: 'e' },
+    rom: { type: 'string', short: 'r' },
     fit: { type: 'string', default: 'cover' },
     resample: { type: 'string', default: 'lanczos3' },
     fill: { type: 'string', default: '#000000' },
@@ -171,6 +174,12 @@ async function runConvert(input) {
       writeFile(`${base}.json`, JSON.stringify(toJson(result.palettes, result.tiles.length), null, 2) + '\n'),
     ]);
     log(`Wrote ${base}.chr, ${base}.nam, ${base}.pal, ${base}.json`);
+  }
+
+  if (values.rom) {
+    const rom = toRom(toChr(result.tiles), toNametable(result.nametable, result.assign), toPal(result.palettes));
+    await writeFile(values.rom, rom);
+    log(`Wrote ${values.rom} (${(rom.length / 1024).toFixed(0)} KB NROM)`);
   }
 
   log(`Universal background: ${json.universalBackground.hex} (${json.universalBackground.nes})`);
