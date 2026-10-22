@@ -6,9 +6,10 @@ import { choosePalettes, nearestNes } from './palettes.js';
 import { renderIndices, blockOf } from './render.js';
 import { reduceTiles } from './tiles.js';
 import { embedText } from './pngtext.js';
+import { placeSprites, MAX_SPRITES } from './sprites.js';
 
 // Public API: everything a library user needs is importable from 'nesifier'.
-export { toChr, toNametable, toPal, toJson } from './export.js';
+export { toChr, toNametable, toPal, toOam, toJson } from './export.js';
 export { toRom } from './rom.js';
 export { verify } from './verify.js';
 export { NES_COLORS } from './nes.js';
@@ -64,10 +65,10 @@ export async function loadImage(input, { fit = 'cover', kernel = 'lanczos3', fil
 /**
  * Convert a 256x240 RGB buffer into NES background data and a preview image.
  * Options: dither ('none' | 'ordered' | 'fs'), strength, bg (hex string),
- * bgCandidates, maxTiles.
+ * bgCandidates, maxTiles, sprites (how many 8x8 sprites to add on top, 0-64).
  */
 export function nesify(rgb, opts = {}) {
-  const { dither = 'none', strength = 0.75, maxTiles = MAX_TILES, bgCandidates = 6 } = opts;
+  const { dither = 'none', strength = 0.75, maxTiles = MAX_TILES, bgCandidates = 6, sprites: maxSprites = 0 } = opts;
   const N = SCREEN_W * SCREEN_H;
   const labs = new Float32Array(N * 3);
   for (let p = 0; p < N; p++) labs.set(labOf(rgb[p * 3], rgb[p * 3 + 1], rgb[p * 3 + 2]), p * 3);
@@ -86,9 +87,41 @@ export function nesify(rgb, opts = {}) {
       out.set(NES_COLORS[palettes[assign[blockOf(x, y)]][v]].rgb, (y * SCREEN_W + x) * 3);
     }
   }
+
+  // Sprites go where the background is furthest from the source, drawn in front of it.
+  let spritePalettes = [], sprites = [];
+  if (maxSprites > 0) {
+    const bgLabs = new Float32Array(N * 3);
+    for (let p = 0; p < N; p++) bgLabs.set(labOf(out[p * 3], out[p * 3 + 1], out[p * 3 + 2]), p * 3);
+    ({ palettes: spritePalettes, sprites } = placeSprites(labs, bgLabs, Math.min(maxSprites, MAX_SPRITES)));
+    for (const s of sprites) {
+      for (let i = 0; i < 64; i++) {
+        if (!s.pattern[i]) continue;
+        const p = (s.y + (i >> 3)) * SCREEN_W + s.x + (i & 7);
+        out.set(NES_COLORS[spritePalettes[s.palette][s.pattern[i] - 1]].rgb, p * 3);
+      }
+    }
+  }
+
+  // Sprite patterns live in the second pattern table; identical patterns share a tile.
+  const spriteTiles = [];
+  const tileIds = new Map();
+  for (const s of sprites) {
+    const key = s.pattern.join('');
+    if (!tileIds.has(key)) { tileIds.set(key, spriteTiles.length); spriteTiles.push(s.pattern); }
+    s.tile = tileIds.get(key);
+  }
+
   // Palette arrangement as hex colors, for savePng to embed so `nesifier check` can verify it.
-  const layout = { palettes: palettes.map((p) => p.map((c) => NES_COLORS[c].hex)), assign: [...assign] };
-  return { rgb: out, palettes, assign, tiles, nametable, uniqueBefore, reduced, layout };
+  const hex = (c) => NES_COLORS[c].hex;
+  const layout = { palettes: palettes.map((p) => p.map(hex)), assign: [...assign] };
+  if (sprites.length) {
+    layout.sprites = {
+      palettes: spritePalettes.map((p) => p.map(hex)),
+      list: sprites.map((s) => ({ x: s.x, y: s.y, palette: s.palette, pattern: s.pattern.join('') })),
+    };
+  }
+  return { rgb: out, palettes, assign, tiles, nametable, uniqueBefore, reduced, layout, spritePalettes, sprites, spriteTiles };
 }
 
 /**

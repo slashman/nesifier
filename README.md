@@ -31,6 +31,7 @@ npm install -g nesifier
 # Make a ROM you can open in an emulator or put on a flash cart
 npx nesifier photo.jpg -r photo.nes
 
+
 # Preview it the way a CRT TV showed it
 npx nesifier photo.jpg -s 3 --aspect 4:3 --scanlines
 
@@ -73,7 +74,7 @@ nesifier check <image>
 | `--scanlines` | Darken alternate lines like a CRT. Sets `--scale` to at least 2 |
 | `--scanline-strength <0..1>` | How dark the scanlines are. Default 0.5 |
 | `-r, --rom <file>` | Write a `.nes` ROM that displays the image |
-| `-e, --export <base>` | Write `<base>.chr`, `.nam`, `.pal` and `.json` |
+| `-e, --export <base>` | Write `<base>.chr`, `.nam`, `.pal` and `.json`, plus `.oam` with sprites |
 
 **Fitting the image**
 
@@ -95,6 +96,7 @@ nesifier check <image>
 | `--bg <#hex>` | Force the shared background color |
 | `--bg-candidates <n>` | How many background colors to try. Default 6 |
 | `--max-tiles <n>` | Tile budget, up to 256. Lower it to leave room for other graphics |
+| `--sprites <n>` | Up to `n` 8×8 sprites (0–64) added where the background is least accurate. Default 64; `0` for background only |
 | `-q, --quiet` | Only print errors |
 
 `--scale`, `--aspect` and `--scanlines` only change the preview PNG. The ROM and exported
@@ -106,6 +108,7 @@ data are always the plain 256×240 screen.
 `--scanlines`, it is pixel-exact and passes `nesifier check`.
 
 **ROM (`-r`).** A 24 KB `.nes` file (NROM, mapper 0) that shows the image and waits.
+With sprites, it refreshes the sprite table every frame, as games do.
 It runs in emulators such as Mesen and FCEUX, and on flash carts. Colors vary a little
 between emulators, and many emulators and TVs hide the outer 8 pixels (overscan).
 
@@ -114,10 +117,11 @@ NES Screen Tool, or include in a ROM build with `.incbin`:
 
 | File | Size | Contents |
 |---|---|---|
-| `.chr` | 4096 bytes | 256 tiles × 16 bytes (bitplane 0, then bitplane 1). Unused tiles are empty |
+| `.chr` | 4096 bytes | 256 tiles × 16 bytes (bitplane 0, then bitplane 1). Unused tiles are empty. 8192 bytes with sprites: sprite tiles follow at `$1000` |
 | `.nam` | 1024 bytes | 960 tile numbers followed by the 64-byte attribute table |
-| `.pal` | 16 bytes | Background palettes for PPU `$3F00–$3F0F`, as NES color numbers |
-| `.json` | | The palettes as hex colors and `$xx` NES color numbers |
+| `.pal` | 16 bytes | Background palettes for PPU `$3F00–$3F0F`, as NES color numbers. 32 bytes with sprites, through `$3F1F` |
+| `.oam` | 256 bytes | With sprites only: the sprite table (Y − 1, tile, attributes, X), ready for OAM DMA. Unused sprites are off screen |
+| `.json` | | The palettes (and sprite palettes) as hex colors and `$xx` NES color numbers |
 
 ## Checking an image
 
@@ -134,28 +138,28 @@ limit, it says so, but the image may still be valid.
 ## Using it as a library
 
 ```js
-import { loadImage, nesify, savePng, toChr, toNametable, toPal, toRom } from 'nesifier';
+import { loadImage, nesify, savePng, toChr, toNametable, toPal, toOam, toRom } from 'nesifier';
 import { writeFile } from 'node:fs/promises';
 
 const screen = await loadImage('photo.jpg', { warp: '4:3' });
-const result = nesify(screen, { dither: 'fs' });
+const result = nesify(screen, { dither: 'fs', sprites: 64 });
 
 await savePng(result.rgb, 'photo.nes.png', { scale: 3, layout: result.layout });
 
-const chr = toChr(result.tiles);
+const chr = toChr(result.tiles, result.spriteTiles);
 const nam = toNametable(result.nametable, result.assign);
-const pal = toPal(result.palettes);
-await writeFile('photo.nes', toRom(chr, nam, pal));
+const pal = toPal(result.palettes, result.spritePalettes);
+await writeFile('photo.nes', toRom(chr, nam, pal, toOam(result.sprites)));
 ```
 
 | Function | Description |
 |---|---|
 | `loadImage(input, options)` | Load a file path or Buffer and fit it to 256×240. Options: `fit`, `kernel`, `fill`, `warp`, `saturation`, `brightness`. Returns RGB bytes |
-| `nesify(rgb, options)` | Convert 256×240 RGB bytes. Options: `dither`, `strength`, `bg`, `bgCandidates`, `maxTiles`. Returns `{ rgb, tiles, nametable, palettes, assign, layout }` |
+| `nesify(rgb, options)` | Convert 256×240 RGB bytes. Options: `dither`, `strength`, `bg`, `bgCandidates`, `maxTiles`, `sprites` (default 0, unlike the CLI). Returns `{ rgb, tiles, nametable, palettes, assign, sprites, spriteTiles, spritePalettes, layout }` |
 | `savePng(rgb, path, options)` | Write the preview. Options: `scale`, `aspect`, `scanlines`, `layout` |
-| `toChr(tiles)`, `toNametable(nametable, assign)`, `toPal(palettes)` | Encode the NES data files |
-| `toJson(palettes, tileCount)` | Palettes as hex colors and NES color numbers |
-| `toRom(chr, nam, pal)` | Build a `.nes` ROM |
+| `toChr(tiles, spriteTiles?)`, `toNametable(nametable, assign)`, `toPal(palettes, spritePalettes?)`, `toOam(sprites)` | Encode the NES data files |
+| `toJson(palettes, tileCount, spritePalettes?, spriteCount?)` | Palettes as hex colors and NES color numbers |
+| `toRom(chr, nam, pal, oam?)` | Build a `.nes` ROM, with sprites if `oam` is given |
 | `verify(rgb, width, height, layout?)` | Check an image against the rules. Returns `{ ok, errors, stats }` |
 | `NES_COLORS` | The 52 usable colors: `{ nes, hex, rgb }` |
 
@@ -174,6 +178,8 @@ Pass `layout: result.layout` to `savePng` so the PNG records its palette arrange
 | Colors on screen | At most 13 (1 shared + 3 per palette) |
 | Palette areas | Each 16 × 16 area uses one palette |
 | Colors | 52 usable NES colors (a common NTSC approximation) |
+| Sprites (optional) | Up to 64 sprites of 8 × 8, at most 8 on any scanline, none on line 0 |
+| Sprite palettes | 4 palettes of 3 colors each; sprite color 0 is transparent |
 
 Every conversion is checked against these rules before nesifier reports success.
 
@@ -198,6 +204,12 @@ Every conversion is checked against these rules before nesifier reports success.
   matching `--aspect` to see the result.
 - **Photos lose color.** The NES palette is sparse, so soft or muted photos come out
   greyish. Try `--saturation 1.5`.
+- **Sprites suit detail.** Sprites are placed where they fix small features, such as
+  eyes, highlights or text, rather than broad areas, where a corrected 8×8 square would
+  stand out as a box. They help most on illustrations and game art; on soft photos the
+  gain is smaller. Sprite tiles live in their own pattern table, so they don't use the
+  background's 256-tile budget. `check` needs the sprite layout stored in nesifier's
+  PNGs to verify a sprite image.
 - **Dithering costs tiles.** Dithered areas create many unique tiles, and merging them
   back down to 256 smooths some of the dithering out.
 - **Colors vary.** There's no single official NES palette; emulators and TVs differ.

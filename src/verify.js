@@ -6,6 +6,50 @@ import {
 const hex = (n) => '#' + n.toString(16).padStart(6, '0').toUpperCase();
 const LEGAL = new Set(NES_COLORS.map((c) => (c.rgb[0] << 16) | (c.rgb[1] << 8) | c.rgb[2]));
 const SLOTS = COLORS_PER_PALETTE - 1;
+const WILD = -2; // a background pixel hidden under a sprite: it can be any color
+const MAX_SPRITES = 64, SPRITES_PER_LINE = 8;
+
+/**
+ * Check `layout.sprites` ({ palettes: [[#hex x3]], list: [{ x, y, palette, pattern }] })
+ * against the sprite rules and the image. Opaque sprite pixels must show their sprite's
+ * color (the first sprite in the list wins, as in OAM); they are then marked WILD so the
+ * background rules only see what the background really shows.
+ */
+function checkSprites(px, sprites, errors) {
+  const { palettes, list } = sprites;
+  if (!Array.isArray(palettes) || palettes.length > 4 || !Array.isArray(list)) {
+    errors.push('Malformed sprite layout');
+    return;
+  }
+  for (const p of palettes) {
+    if (p.length !== 3 || p.some((c) => !LEGAL.has(parseInt(String(c).slice(1), 16)))) {
+      errors.push('Sprite palettes must have 3 NES colors each');
+      return;
+    }
+  }
+  if (list.length > MAX_SPRITES) errors.push(`${list.length} sprites, maximum is ${MAX_SPRITES}`);
+  const perLine = new Uint8Array(SCREEN_H);
+  const claimed = new Uint8Array(SCREEN_W * SCREEN_H);
+  let mismatched = 0;
+  for (const s of list) {
+    const okShape = Number.isInteger(s.x) && Number.isInteger(s.y) && s.x >= 0 && s.x <= SCREEN_W - TILE &&
+      s.y >= 1 && s.y <= SCREEN_H - TILE && Number.isInteger(s.palette) && s.palette >= 0 &&
+      s.palette < palettes.length && /^[0-3]{64}$/.test(s.pattern);
+    if (!okShape) { errors.push('Malformed sprite in layout'); return; }
+    for (let dy = 0; dy < TILE; dy++) perLine[s.y + dy]++;
+    for (let i = 0; i < 64; i++) {
+      const v = +s.pattern[i];
+      const p = (s.y + (i >> 3)) * SCREEN_W + s.x + (i & 7);
+      if (!v || claimed[p]) continue; // transparent, or hidden by an earlier sprite
+      claimed[p] = 1;
+      if (px[p] !== parseInt(palettes[s.palette][v - 1].slice(1), 16)) mismatched++;
+      px[p] = WILD;
+    }
+  }
+  const busy = perLine.filter((n) => n > SPRITES_PER_LINE).length;
+  if (busy) errors.push(`${busy} scanline(s) have more than ${SPRITES_PER_LINE} sprites`);
+  if (mismatched) errors.push(`${mismatched} pixel(s) don't match the sprite drawn over them`);
+}
 
 // Pack per-block color sets (background removed) into <= 4 palettes of <= 3 colors.
 function packPalettes(sets) {
@@ -115,20 +159,21 @@ export function verify(rgb, width, height, layout = null) {
     const list = [...illegal.keys()].slice(0, 8).map(hex).join(' ');
     errors.push(`${illegal.size} color(s) not in the NES palette: ${list}${illegal.size > 8 ? ' ...' : ''}`);
   }
+  if (layout?.sprites) checkSprites(px, layout.sprites, errors);
 
   const blockSets = [];
   for (let by = 0; by < BLOCKS_H; by++) {
     for (let bx = 0; bx < BLOCKS_W; bx++) {
       const s = new Set();
       for (let y = by * ATTR; y < (by + 1) * ATTR; y++)
-        for (let x = bx * ATTR; x < (bx + 1) * ATTR; x++) s.add(px[y * SCREEN_W + x]);
+        for (let x = bx * ATTR; x < (bx + 1) * ATTR; x++) if (px[y * SCREEN_W + x] !== WILD) s.add(px[y * SCREEN_W + x]);
       blockSets.push([...s].sort((a, b) => a - b));
     }
   }
   const crowded = blockSets.filter((s) => s.length > COLORS_PER_PALETTE).length;
   if (crowded) errors.push(`${crowded} 16x16 area(s) use more than ${COLORS_PER_PALETTE} colors`);
 
-  const allColors = [...new Set(px)];
+  const allColors = [...new Set(px)].filter((c) => c !== WILD);
   const total = allColors.length;
   if (total > 1 + NUM_PALETTES * SLOTS) errors.push(`${total} colors on screen, maximum is ${1 + NUM_PALETTES * SLOTS}`);
 
@@ -168,7 +213,7 @@ export function verify(rgb, width, height, layout = null) {
       tilePal[t] = palIdx[((ty * TILE / ATTR) | 0) * BLOCKS_W + ((tx * TILE / ATTR) | 0)];
       for (let i = 0; i < TILE * TILE; i++) {
         const c = px[(ty * TILE + (i >> 3)) * SCREEN_W + tx * TILE + (i & 7)];
-        slots[t * 64 + i] = c === bg ? 0 : pals[tilePal[t]].indexOf(c) + 1;
+        slots[t * 64 + i] = c === WILD ? 255 : c === bg ? 0 : pals[tilePal[t]].indexOf(c) + 1;
       }
     }
 
@@ -181,12 +226,35 @@ export function verify(rgb, width, height, layout = null) {
     for (let combo = 0; combo < combos; combo++) {
       const perm = pals.map((_, p) => PERMS[Math.floor(combo / PERMS.length ** p) % PERMS.length]);
       const patterns = new Set();
+      const partial = [];
       for (let t = 0; t < NT; t++) {
         const m = perm[tilePal[t]];
-        for (let i = 0; i < 64; i++) key[i] = m[slots[t * 64 + i]];
-        patterns.add(key.toString('latin1'));
+        let hidden = false;
+        for (let i = 0; i < 64; i++) {
+          const s = slots[t * 64 + i];
+          if (s === 255) hidden = true;
+          key[i] = s === 255 ? 255 : m[s];
+        }
+        if (hidden) partial.push(Buffer.from(key));
+        else patterns.add(key.toString('latin1'));
       }
-      if (patterns.size < best.count) best = { count: patterns.size, perm };
+      // A tile partly hidden by sprites can reuse any full pattern that agrees with every
+      // visible pixel. Otherwise it shares a new pattern with other partly hidden tiles
+      // whose visible pixels never disagree, filling in each other's unknowns. Every
+      // tile agrees with the pattern it ends up using, so this never undercounts and an
+      // image can't pass unless a valid tile set exists.
+      const full = [...patterns].map((k) => Buffer.from(k, 'latin1'));
+      const shared = [];
+      const known = (k) => k.reduce((n, v) => n + (v !== 255), 0);
+      partial.sort((a, b) => known(b) - known(a));
+      for (const k of partial) {
+        if (full.some((q) => k.every((v, i) => v === 255 || v === q[i]))) continue;
+        const q = shared.find((q) => k.every((v, i) => v === 255 || q[i] === 255 || v === q[i]));
+        if (q) k.forEach((v, i) => { if (v !== 255) q[i] = v; });
+        else shared.push(Buffer.from(k));
+      }
+      const count = patterns.size + shared.length;
+      if (count < best.count) best = { count, perm };
       if (best.count <= MAX_TILES) break;
     }
     if (!layout && best.count > MAX_TILES) best = refineLayout(px, bg, pals, sets, palIdx, best.perm, PERMS);
@@ -207,6 +275,6 @@ export function verify(rgb, width, height, layout = null) {
   return {
     ok: errors.length === 0,
     errors,
-    stats: { colors: total, tiles: tileCount, palettes: solution?.palettes ?? null },
+    stats: { colors: total, tiles: tileCount, palettes: solution?.palettes ?? null, sprites: layout?.sprites?.list?.length ?? 0 },
   };
 }

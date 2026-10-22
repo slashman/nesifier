@@ -7,7 +7,7 @@ import { readFile } from 'node:fs/promises';
 import { loadImage, nesify, savePng, ASPECTS, LAYOUT_KEY } from '../src/index.js';
 import { readText } from '../src/pngtext.js';
 import { verify } from '../src/verify.js';
-import { toChr, toNametable, toPal, toJson } from '../src/export.js';
+import { toChr, toNametable, toPal, toOam, toJson } from '../src/export.js';
 import { toRom } from '../src/rom.js';
 import { NES_COLORS } from '../src/nes.js';
 
@@ -24,6 +24,7 @@ Output:
       --scanlines           darken alternate lines like a CRT (forces --scale >= 2)
       --scanline-strength <0..1>  how dark the scanlines are (default 0.5)
   -e, --export <base>       write <base>.chr, <base>.nam, <base>.pal, <base>.json
+                            (and <base>.oam when sprites are used)
   -r, --rom <file>          write a .nes ROM (NROM) that displays the image
 
 Image fitting:
@@ -41,6 +42,8 @@ Conversion:
       --bg <#hex>           force the universal background color
       --bg-candidates <n>   background colors to try when not forced (default 6)
       --max-tiles <n>       unique tile budget, at most 256 (default 256)
+      --sprites <n>         8x8 sprites to add where the background is least accurate,
+                            0-64 (default 64; 0 for background only)
   -q, --quiet               only print errors
   -h, --help                show this help
 
@@ -71,6 +74,7 @@ const { values, positionals } = parseArgs({
     bg: { type: 'string' },
     'bg-candidates': { type: 'string', default: '6' },
     'max-tiles': { type: 'string', default: '256' },
+    sprites: { type: 'string', default: '64' },
     quiet: { type: 'boolean', short: 'q', default: false },
     help: { type: 'boolean', short: 'h', default: false },
   },
@@ -97,7 +101,8 @@ function fail(msg) {
 
 function report(result) {
   if (result.ok) {
-    log(`✓ NES constraints satisfied (${result.stats.colors} colors, ${result.stats.tiles} unique tiles)`);
+    const { colors, tiles, sprites } = result.stats;
+    log(`✓ NES constraints satisfied (${colors} colors, ${tiles} unique tiles${sprites ? `, ${sprites} sprites` : ''})`);
   } else {
     console.error('✗ NES constraint violations:');
     for (const e of result.errors) console.error(`  - ${e}`);
@@ -158,9 +163,15 @@ async function runConvert(input) {
     bg: values.bg,
     bgCandidates: num('bg-candidates', { min: 1, max: NES_COLORS.length, int: true }),
     maxTiles: num('max-tiles', { min: 1, max: 256, int: true }),
+    sprites: num('sprites', { min: 0, max: 64, int: true }),
   });
 
-  const json = toJson(result.palettes, result.tiles.length);
+  const json = toJson(result.palettes, result.tiles.length, result.spritePalettes, result.sprites.length);
+  const hasSprites = result.sprites.length > 0;
+  const chr = toChr(result.tiles, result.spriteTiles);
+  const nam = toNametable(result.nametable, result.assign);
+  const pal = toPal(result.palettes, result.spritePalettes);
+  const oam = hasSprites ? toOam(result.sprites) : null;
   const { layout } = result;
   // Create missing folders for every output, e.g. `-e out/title`.
   for (const file of [output, values.export, values.rom].filter(Boolean))
@@ -170,17 +181,15 @@ async function runConvert(input) {
 
   if (values.export) {
     const base = values.export;
-    await Promise.all([
-      writeFile(`${base}.chr`, toChr(result.tiles)),
-      writeFile(`${base}.nam`, toNametable(result.nametable, result.assign)),
-      writeFile(`${base}.pal`, toPal(result.palettes)),
-      writeFile(`${base}.json`, JSON.stringify(toJson(result.palettes, result.tiles.length), null, 2) + '\n'),
-    ]);
-    log(`Wrote ${base}.chr, ${base}.nam, ${base}.pal, ${base}.json`);
+    const files = [[`${base}.chr`, chr], [`${base}.nam`, nam], [`${base}.pal`, pal],
+      [`${base}.json`, JSON.stringify(json, null, 2) + '\n']];
+    if (oam) files.push([`${base}.oam`, oam]);
+    await Promise.all(files.map(([file, data]) => writeFile(file, data)));
+    log(`Wrote ${files.map(([file]) => file).join(', ')}`);
   }
 
   if (values.rom) {
-    const rom = toRom(toChr(result.tiles), toNametable(result.nametable, result.assign), toPal(result.palettes));
+    const rom = toRom(chr, nam, pal, oam);
     await writeFile(values.rom, rom);
     log(`Wrote ${values.rom} (${(rom.length / 1024).toFixed(0)} KB NROM)`);
   }
@@ -188,6 +197,10 @@ async function runConvert(input) {
   log(`Universal background: ${json.universalBackground.hex} (${json.universalBackground.nes})`);
   json.palettes.forEach((p, i) => log(`  palette ${i}: ${p.map((c) => `${c.hex} ${c.nes}`).join('  ')}`));
   log(`Tiles: ${result.tiles.length}${result.reduced ? ` (reduced from ${result.uniqueBefore} unique)` : ''}`);
+  if (hasSprites) {
+    log(`Sprites: ${result.sprites.length} (${result.spriteTiles.length} sprite tiles)`);
+    json.spritePalettes.forEach((p, i) => log(`  sprite palette ${i}: ${p.map((c) => `${c.hex} ${c.nes}`).join('  ')}`));
+  }
 
   // Self-check the rendered screen against the rules, independent of the converter.
   const check = verify(result.rgb, 256, 240, layout);
