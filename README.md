@@ -31,12 +31,8 @@ npm install -g nesifier
 # Make a ROM you can open in an emulator or put on a flash cart
 npx nesifier photo.jpg -r photo.nes
 
-
 # Preview it the way a CRT TV showed it
 npx nesifier photo.jpg -s 3 --aspect 4:3 --scanlines
-
-# Keep proportions right on a TV (the NES stretches pixels horizontally)
-npx nesifier photo.jpg --warp 4:3 --aspect 4:3 -s 3
 
 # Dither for smoother gradients
 npx nesifier photo.jpg -d fs
@@ -70,7 +66,7 @@ nesifier check <image>
 |---|---|
 | `-o, --output <file>` | Preview PNG path. Default: `<input>.nes.png` |
 | `-s, --scale <n>` | Enlarge the preview with sharp pixels (1–16) |
-| `--aspect <mode>` | Preview shape: `square` (default), `ntsc` (8:7 pixels) or `4:3` (TV frame) |
+| `--aspect <mode>` | Preview shape: `square` (default), `ntsc` (8:7 pixels) or `4:3` (TV frame). Also sets `--warp` unless you give one |
 | `--scanlines` | Darken alternate lines like a CRT. Sets `--scale` to at least 2 |
 | `--scanline-strength <0..1>` | How dark the scanlines are. Default 0.5 |
 | `-r, --rom <file>` | Write a `.nes` ROM that displays the image |
@@ -82,7 +78,7 @@ nesifier check <image>
 |---|---|
 | `--fit <mode>` | `cover` crops to fill the screen (default), `contain` shows the whole image with padding, `fill` stretches |
 | `--fill <#hex>` | Padding color for `--fit contain`. Default `#000000` |
-| `--warp <mode>` | `ntsc` or `4:3`: pre-squeeze the image so it looks undistorted once a TV stretches it |
+| `--warp <mode>` | `square`, `ntsc` or `4:3`: pre-squeeze the image so it looks undistorted once a TV stretches it. Default: same as `--aspect` |
 | `--resample <kernel>` | `lanczos3` (default, photos), `nearest` (pixel art), `cubic`, `mitchell` |
 | `--saturation <n>` | Saturation multiplier before converting. Photos often look better at 1.3–1.6 |
 | `--brightness <n>` | Brightness multiplier before converting |
@@ -199,9 +195,10 @@ Every conversion is checked against these rules before nesifier reports success.
 ## Tips and limits
 
 - **TV proportions.** NES pixels aren't square: TVs stretch the screen horizontally
-  (8:7 per pixel on NTSC, about 4:3 overall). Without `--warp`, circles look 14–25% too
-  wide on a TV. With `--warp`, the plain 256×240 PNG looks squeezed; preview with the
-  matching `--aspect` to see the result.
+  (8:7 per pixel on NTSC, about 4:3 overall). Without correction, circles look 14–25%
+  too wide on a TV. `--aspect` previews the TV shape and corrects for it; `--warp` alone
+  corrects the data but keeps the plain 256×240 PNG, which then looks squeezed. To see
+  the uncorrected distortion, use `--aspect 4:3 --warp square`.
 - **Photos lose color.** The NES palette is sparse, so soft or muted photos come out
   greyish. Try `--saturation 1.5`.
 - **Sprites suit detail.** Sprites are placed where they fix small features, such as

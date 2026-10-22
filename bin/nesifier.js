@@ -31,8 +31,8 @@ Image fitting:
       --fit <mode>          cover | contain | fill (default cover)
       --resample <kernel>   lanczos3 | nearest | cubic | mitchell (default lanczos3)
       --fill <#hex>         padding color for --fit contain (default #000000)
-      --warp <mode>         pre-squeeze for a stretched display: ntsc | 4:3 (default
-                            square = none). Pair it with the same --aspect to preview.
+      --warp <mode>         pre-squeeze for a stretched display: square | ntsc | 4:3
+                            (default: same as --aspect)
       --saturation <n>      saturation multiplier before conversion (default 1)
       --brightness <n>      brightness multiplier before conversion (default 1)
 
@@ -66,7 +66,7 @@ const { values, positionals } = parseArgs({
     fit: { type: 'string', default: 'cover' },
     resample: { type: 'string', default: 'lanczos3' },
     fill: { type: 'string', default: '#000000' },
-    warp: { type: 'string', default: 'square' },
+    warp: { type: 'string' }, // defaults to --aspect
     saturation: { type: 'string', default: '1' },
     brightness: { type: 'string', default: '1' },
     dither: { type: 'string', short: 'd', default: 'none' },
@@ -138,6 +138,8 @@ async function runConvert(input) {
   const output = values.output ?? path.join(path.dirname(input), path.parse(input).name + '.nes.png');
   let scale = num('scale', { min: 1, max: 16, int: true });
   const aspect = oneOf('aspect', Object.keys(ASPECTS));
+  // A TV-shaped preview should look right, so correct for the same shape unless told otherwise.
+  if (values.warp === undefined) values.warp = aspect;
   const warp = oneOf('warp', Object.keys(ASPECTS));
   if (warp !== 'square' && aspect !== warp)
     log(`Note: --warp ${warp} squeezes the image; preview with --aspect ${warp} to see it undistorted`);
