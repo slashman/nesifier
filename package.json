@@ -22,7 +22,7 @@
   "type": "module",
   "main": "./src/index.js",
   "bin": {
-    "nesifier": "./bin/nesifier.js"
+    "nesifier": "bin/nesifier.js"
   },
   "directories": {
     "test": "test"
