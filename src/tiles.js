@@ -6,7 +6,7 @@ import { blockOf } from './render.js';
 const NT = MAP_W * MAP_H; // 960 nametable cells
 const PX = TILE * TILE; // 64 pixels per tile
 
-const keyOf = (pat) => Buffer.from(pat).toString('latin1');
+const keyOf = (pat) => String.fromCharCode(...pat);
 
 /**
  * Reduce the 960 nametable cells to at most `maxTiles` distinct 2-bit patterns.

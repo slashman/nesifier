@@ -6,6 +6,7 @@ import {
 const hex = (n) => '#' + n.toString(16).padStart(6, '0').toUpperCase();
 const LEGAL = new Set(NES_COLORS.map((c) => (c.rgb[0] << 16) | (c.rgb[1] << 8) | c.rgb[2]));
 const SLOTS = COLORS_PER_PALETTE - 1;
+const str = (bytes) => String.fromCharCode(...bytes);
 const WILD = -2; // a background pixel hidden under a sprite: it can be any color
 const MAX_SPRITES = 64, SPRITES_PER_LINE = 8;
 
@@ -92,14 +93,14 @@ function refineLayout(px, bg, pals, sets, palIdx, startPerm, PERMS) {
     const tx = (b % BLOCKS_W) * 2, ty = ((b / BLOCKS_W) | 0) * 2;
     return [ty * MAP_W + tx, ty * MAP_W + tx + 1, (ty + 1) * MAP_W + tx, (ty + 1) * MAP_W + tx + 1];
   };
-  const key = Buffer.alloc(64);
+  const key = new Uint8Array(64);
   const keyFor = (t, p) => {
     const tx = t % MAP_W, ty = (t / MAP_W) | 0, m = perm[p];
     for (let i = 0; i < 64; i++) {
       const c = px[(ty * TILE + (i >> 3)) * SCREEN_W + tx * TILE + (i & 7)];
       key[i] = c === bg ? 0 : m[pals[p].indexOf(c) + 1];
     }
-    return key.toString('latin1');
+    return str(key);
   };
   const counts = new Map();
   const add = (b) => { for (const t of tilesOf(b)) { const k = keyFor(t, assign[b]); counts.set(k, (counts.get(k) || 0) + 1); } };
@@ -222,7 +223,7 @@ export function verify(rgb, width, height, layout = null) {
     const PERMS = [[0, 1, 2, 3], [0, 1, 3, 2], [0, 2, 1, 3], [0, 2, 3, 1], [0, 3, 1, 2], [0, 3, 2, 1]];
     const combos = layout ? 1 : PERMS.length ** pals.length;
     let best = { count: Infinity, combo: 0 };
-    const key = Buffer.alloc(64);
+    const key = new Uint8Array(64);
     for (let combo = 0; combo < combos; combo++) {
       const perm = pals.map((_, p) => PERMS[Math.floor(combo / PERMS.length ** p) % PERMS.length]);
       const patterns = new Set();
@@ -235,15 +236,15 @@ export function verify(rgb, width, height, layout = null) {
           if (s === 255) hidden = true;
           key[i] = s === 255 ? 255 : m[s];
         }
-        if (hidden) partial.push(Buffer.from(key));
-        else patterns.add(key.toString('latin1'));
+        if (hidden) partial.push(key.slice());
+        else patterns.add(str(key));
       }
       // A tile partly hidden by sprites can reuse any full pattern that agrees with every
       // visible pixel. Otherwise it shares a new pattern with other partly hidden tiles
       // whose visible pixels never disagree, filling in each other's unknowns. Every
       // tile agrees with the pattern it ends up using, so this never undercounts and an
       // image can't pass unless a valid tile set exists.
-      const full = [...patterns].map((k) => Buffer.from(k, 'latin1'));
+      const full = [...patterns].map((k) => Uint8Array.from(k, (ch) => ch.charCodeAt(0)));
       const shared = [];
       const known = (k) => k.reduce((n, v) => n + (v !== 255), 0);
       partial.sort((a, b) => known(b) - known(a));
@@ -251,7 +252,7 @@ export function verify(rgb, width, height, layout = null) {
         if (full.some((q) => k.every((v, i) => v === 255 || v === q[i]))) continue;
         const q = shared.find((q) => k.every((v, i) => v === 255 || q[i] === 255 || v === q[i]));
         if (q) k.forEach((v, i) => { if (v !== 255) q[i] = v; });
-        else shared.push(Buffer.from(k));
+        else shared.push(k.slice());
       }
       const count = patterns.size + shared.length;
       if (count < best.count) best = { count, perm };
