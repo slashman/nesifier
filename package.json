@@ -32,7 +32,9 @@
     "src"
   ],
   "scripts": {
-    "test": "node --test test/*.test.js"
+    "test": "node --test test/*.test.js",
+    "web": "node scripts/serve-web.js",
+    "build:web": "node scripts/build-site.js"
   },
   "dependencies": {
     "sharp": "^0.34.5"
@@ -41,6 +43,6 @@
     "jsnes": "^2.1.0"
   },
   "engines": {
-    "node": ">=22.2"
+    "node": ">=18.17"
   }
 }

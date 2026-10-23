@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>nesifier</title>
+  <meta name="description" content="Turn any image into a real NES background: 256×240, 4 palettes, 256 tiles and 64 sprites. Download a PNG, the graphics data or a playable .nes ROM.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8' shape-rendering='crispEdges'%3E%3Crect width='8' height='8' fill='%23c8102e'/%3E%3Crect x='1' y='1' width='6' height='6' fill='%23f2f1ec'/%3E%3Crect x='2' y='2' width='4' height='4' fill='%231c1c20'/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="top">
+    <div class="brand">
+      <h1>nesifier</h1>
+      <p>by <a href="https://slashie.net">slashie</a></p>
+    </div>
+    <nav class="links">
+      <a href="https://github.com/slashman/nesifier">GitHub</a>
+      <a href="https://www.npmjs.com/package/nesifier">npm</a>
+    </nav>
+  </header>
+
+  <main class="workspace">
+    <section class="stage" aria-label="Preview">
+      <div class="screen-frame" id="drop">
+        <div class="screen" id="screen">
+          <canvas id="out" width="256" height="240" aria-label="NES screen"></canvas>
+          <canvas id="src" width="256" height="240" aria-hidden="true" hidden></canvas>
+          <canvas id="boxes" width="256" height="240" aria-hidden="true" hidden></canvas>
+          <div class="scanlines" id="scanlines" hidden></div>
+        </div>
+        <div class="drop-hint" id="drop-hint" hidden>Drop to convert</div>
+        <div class="busy" id="busy" hidden>Converting…</div>
+      </div>
+
+      <div class="view-bar">
+        <button type="button" class="hold" id="compare">Hold to see the original</button>
+        <label class="toggle"><input type="checkbox" id="show-boxes"> Outline sprites</label>
+        <label class="toggle"><input type="checkbox" id="show-scanlines"> Scanlines</label>
+        <span class="timing" id="timing"></span>
+      </div>
+
+    </section>
+
+    <aside class="panel" aria-label="Options">
+      <div class="group">
+        <label class="button primary file" for="file">Choose image
+          <input type="file" id="file" accept="image/*">
+        </label>
+        <p class="file-name" id="file-name"></p>
+      </div>
+
+      <fieldset class="group">
+        <legend>Fit</legend>
+        <div class="seg" role="radiogroup">
+          <label><input type="radio" name="fit" value="cover" checked><span>Crop</span></label>
+          <label><input type="radio" name="fit" value="contain"><span>Whole</span></label>
+          <label><input type="radio" name="fit" value="fill"><span>Stretch</span></label>
+        </div>
+        <label class="row" id="fill-row" hidden>Padding color <input type="color" id="fill" value="#000000"></label>
+        <label class="row check"><input type="checkbox" id="pixel-art" checked> Pixel art (sharp edges)</label>
+      </fieldset>
+
+      <fieldset class="group">
+        <legend>TV shape</legend>
+        <div class="seg" role="radiogroup">
+          <label><input type="radio" name="aspect" value="square"><span>Square</span></label>
+          <label><input type="radio" name="aspect" value="ntsc"><span>NTSC 8:7</span></label>
+          <label><input type="radio" name="aspect" value="4:3" checked><span>4:3</span></label>
+        </div>
+        <label class="row check"><input type="checkbox" id="warp" checked> Correct proportions for this shape</label>
+      </fieldset>
+
+      <fieldset class="group">
+        <legend>Dithering</legend>
+        <div class="seg" role="radiogroup">
+          <label><input type="radio" name="dither" value="none"><span>None</span></label>
+          <label><input type="radio" name="dither" value="ordered" checked><span>Pattern</span></label>
+          <label><input type="radio" name="dither" value="fs"><span>Diffuse</span></label>
+        </div>
+        <label class="slider" id="strength-row" hidden>
+          <span>Strength <output id="strength-out">1.00</output></span>
+          <input type="range" id="strength" min="0.1" max="1" step="0.05" value="1">
+        </label>
+      </fieldset>
+
+      <fieldset class="group">
+        <legend>Color</legend>
+        <label class="slider">
+          <span>Saturation <output id="saturation-out">1.50</output></span>
+          <input type="range" id="saturation" min="0" max="2" step="0.05" value="1.5">
+        </label>
+        <label class="slider">
+          <span>Brightness <output id="brightness-out">0.75</output></span>
+          <input type="range" id="brightness" min="0.5" max="1.5" step="0.05" value="0.75">
+        </label>
+      </fieldset>
+
+      <fieldset class="group">
+        <legend>Detail</legend>
+        <label class="slider">
+          <span>Sprites <output id="sprites-out">64</output></span>
+          <input type="range" id="sprites" min="0" max="64" step="1" value="64">
+        </label>
+        <label class="slider">
+          <span>Tile budget <output id="tiles-out">160</output></span>
+          <input type="range" id="max-tiles" min="64" max="256" step="8" value="160">
+        </label>
+      </fieldset>
+
+      <div class="group downloads">
+        <h2>Download</h2>
+        <button type="button" class="button primary" id="dl-rom">ROM (.nes)</button>
+        <button type="button" class="button" id="play">Run it in an emulator</button>
+        <div class="dl-grid">
+          <button type="button" class="button small" id="dl-png">PNG 256×240</button>
+          <button type="button" class="button small" id="dl-preview">TV preview PNG</button>
+        </div>
+        <div class="dl-grid data">
+          <button type="button" class="button small" id="dl-chr">.chr</button>
+          <button type="button" class="button small" id="dl-nam">.nam</button>
+          <button type="button" class="button small" id="dl-pal">.pal</button>
+          <button type="button" class="button small" id="dl-oam">.oam</button>
+          <button type="button" class="button small" id="dl-json">.json</button>
+        </div>
+      </div>
+
+      <div class="group cli">
+        <h2>From the command line</h2>
+        <div class="cli-box">
+          <code id="cli"></code>
+          <button type="button" class="button small" id="copy-cli">Copy</button>
+        </div>
+      </div>
+    </aside>
+    <section class="results" aria-label="Result">
+        <div class="status bad" id="status" role="status" hidden></div>
+        <div class="meters" id="meters"></div>
+        <div class="palettes">
+          <div>
+            <h2>Background palettes</h2>
+            <div id="bg-palettes" class="pal-list"></div>
+          </div>
+          <div id="sprite-palette-block">
+            <h2>Sprite palettes</h2>
+            <div id="sprite-palettes" class="pal-list"></div>
+          </div>
+        </div>
+    </section>
+  </main>
+
+  <footer class="credit">
+    Sample image: <a href="https://commons.wikimedia.org/wiki/File:1665_Girl_with_a_Pearl_Earring.jpg">Girl with a Pearl Earring</a>,
+    Johannes Vermeer, c. 1665. Public domain.
+  </footer>
+
+  <dialog id="emu" aria-labelledby="emu-title">
+    <div class="emu-head">
+      <h2 id="emu-title">Running in jsnes</h2>
+      <button type="button" class="button small" id="emu-close">Close</button>
+    </div>
+    <div class="emu-screen" id="emu-screen"><canvas id="emu-canvas" width="256" height="240"></canvas></div>
+    <label class="row check"><input type="checkbox" id="emu-overscan"> Hide the edges like a TV (overscan)</label>
+  </dialog>
+
+  <script src="vendor/jsnes.min.js"></script>
+  <script type="module" src="app.js"></script>
+</body>
+</html>

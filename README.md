@@ -4,7 +4,7 @@ Turn any image into a real NES background: a screen the console can actually dis
 with the NES's own limits on colors, palettes and tiles. You get a preview PNG, the raw
 graphics data for NES development, or a `.nes` ROM that shows the image in any emulator.
 
-Requires Node.js 22.2 or newer.
+Requires Node.js 18.17 or newer.
 
 ## Quick start
 
@@ -220,11 +220,21 @@ cd nesifier
 npm install
 npm test
 node bin/nesifier.js photo.jpg -s 3
+npm run web          # the web page at http://localhost:8080
 ```
 
 The tests include booting generated ROMs in an emulator (jsnes) and comparing the frame
 with the preview pixel by pixel.
 
+The conversion code in `src/core.js` runs in both Node and browsers; `src/index.js` adds
+file and image handling for Node through sharp. The web page (`web/`) loads the core
+directly with no build step and converts in a Web Worker. `npm run build:web` assembles a
+static copy in `_site/` that can be hosted anywhere.
+
 ## License
 
 MIT
+
+The web page's sample image is a crop of
+[Girl with a Pearl Earring](https://commons.wikimedia.org/wiki/File:1665_Girl_with_a_Pearl_Earring.jpg)
+by Johannes Vermeer (c. 1665), in the public domain.

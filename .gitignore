@@ -1,2 +1,4 @@
 node_modules/
 *.nes.png
+_site/
+.playwright-cli/
