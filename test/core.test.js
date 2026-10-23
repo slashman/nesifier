@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { fitPlan, renderPreview, modulate } from '../src/core.js';
+import { fitPlan, parseCropbox, renderPreview, modulate } from '../src/core.js';
 
 const SRC = join(dirname(fileURLToPath(import.meta.url)), '..', 'src');
 
@@ -36,6 +36,26 @@ test('fitPlan crops, pads and warps like the TV will show it', () => {
   const w = fitPlan(600, 600, { fit: 'contain', warp: '4:3' });
   assert.deepEqual([w.dw, w.dh], [192, 240]);
   assert.deepEqual(fitPlan(10, 20, { fit: 'fill' }), { sx: 0, sy: 0, sw: 10, sh: 20, dx: 0, dy: 0, dw: 256, dh: 240 });
+});
+
+test('parseCropbox reads presets and tile boxes', () => {
+  assert.deepEqual(parseCropbox('band'), { x: 0, y: 6, w: 32, h: 16 });
+  assert.deepEqual(parseCropbox('small'), { x: 4, y: 6, w: 24, h: 16 });
+  assert.deepEqual(parseCropbox(' 2, 3,10 ,12'), { x: 2, y: 3, w: 10, h: 12 });
+  assert.equal(parseCropbox('full'), null);
+  assert.equal(parseCropbox('0,0,32,30'), null);
+  for (const bad of ['0,0,33,1', '0,29,1,2', '1,1,0,1', '1,1,1', '1.5,0,2,2', 'wide'])
+    assert.throws(() => parseCropbox(bad), /crop box/, bad);
+});
+
+test('fitPlan fits to the crop box', () => {
+  const box = { x: 4, y: 6, w: 24, h: 16 }; // 192x128 pixels at (32, 48)
+  // A 3:2 source exactly covers a 3:2 box.
+  assert.deepEqual(fitPlan(300, 200, { fit: 'cover', cropbox: box }), { sx: 0, sy: 0, sw: 300, sh: 200, dx: 32, dy: 48, dw: 192, dh: 128 });
+  // A square source is centered inside the box with padding on its sides.
+  const c = fitPlan(500, 500, { fit: 'contain', cropbox: box });
+  assert.deepEqual([c.dx, c.dy, c.dw, c.dh], [64, 48, 128, 128]);
+  assert.deepEqual(fitPlan(10, 20, { fit: 'fill', cropbox: box }), { sx: 0, sy: 0, sw: 10, sh: 20, dx: 32, dy: 48, dw: 192, dh: 128 });
 });
 
 test('renderPreview scales, stretches and draws scanlines', () => {

@@ -1,4 +1,4 @@
-import { ASPECTS, LAYOUT_KEY, embedText, renderPreview } from './src/core.js';
+import { ASPECTS, CROPBOXES, LAYOUT_KEY, embedText, parseCropbox, renderPreview } from './src/core.js';
 
 const $ = (id) => document.getElementById(id);
 const worker = new Worker('./worker.js', { type: 'module' });
@@ -12,8 +12,8 @@ let jobId = 0, busy = false, pending = false;
 // ---------- Options ----------
 
 const DEFAULTS = {
-  fit: 'cover', fill: '#000000', pixelArt: true, aspect: '4:3', warp: true, dither: 'ordered',
-  strength: 1, sprites: 64, maxTiles: 160, saturation: 1.5, brightness: 0.75,
+  fit: 'contain', fill: '#000000', pixelArt: true, cropbox: 'small', box: { ...CROPBOXES.small }, letterbox: '#000000', aspect: '4:3', warp: true, dither: 'ordered',
+  strength: 0.4, sprites: 64, maxTiles: 128, saturation: 1.75, brightness: 0.85,
 };
 
 function readOptions() {
@@ -22,6 +22,9 @@ function readOptions() {
     fit: radio('fit'),
     fill: $('fill').value,
     pixelArt: $('pixel-art').checked,
+    cropbox: radio('cropbox'),
+    box: { x: +$('box-x').value, y: +$('box-y').value, w: +$('box-w').value, h: +$('box-h').value },
+    letterbox: $('letterbox').value,
     aspect: radio('aspect'),
     warp: $('warp').checked,
     dither: radio('dither'),
@@ -34,12 +37,14 @@ function readOptions() {
 }
 
 function applyOptions(o) {
-  for (const name of ['fit', 'aspect', 'dither']) {
+  for (const name of ['fit', 'cropbox', 'aspect', 'dither']) {
     const input = document.querySelector(`input[name="${name}"][value="${o[name]}"]`);
     if (input) input.checked = true;
   }
   $('fill').value = o.fill;
   $('pixel-art').checked = o.pixelArt;
+  setBoxInputs(o.box);
+  $('letterbox').value = o.letterbox;
   $('warp').checked = o.warp;
   $('strength').value = o.strength;
   $('sprites').value = o.sprites;
@@ -48,10 +53,23 @@ function applyOptions(o) {
   $('brightness').value = o.brightness;
 }
 
+function setBoxInputs({ x, y, w, h }) {
+  $('box-x').value = x; $('box-y').value = y; $('box-w').value = w; $('box-h').value = h;
+}
+
+// The crop box in tiles (null for the whole screen), with custom values clamped onto it.
+function cropboxOf(o) {
+  if (o.cropbox !== 'custom') return parseCropbox(o.cropbox);
+  const int = (v, min, max) => Math.min(max, Math.max(min, Math.round(v) || 0));
+  const x = int(o.box.x, 0, 31), y = int(o.box.y, 0, 29);
+  return parseCropbox([x, y, int(o.box.w, 1, 32 - x), int(o.box.h, 1, 30 - y)].join(','));
+}
+
 function loadSaved() {
   try {
     const saved = JSON.parse(localStorage.getItem(STORE_KEY) || 'null');
     if (saved) applyOptions({ ...DEFAULTS, ...saved });
+    if (saved?.cropbox === 'custom') setBoxInputs(cropboxOf(readOptions()) ?? CROPBOXES.full);
   } catch { /* storage unavailable: use defaults */ }
 }
 
@@ -71,7 +89,7 @@ function convert() {
   worker.postMessage({
     type: 'convert',
     id: ++jobId,
-    opts: { ...o, warp: o.warp ? o.aspect : 'square' },
+    opts: { ...o, warp: o.warp ? o.aspect : 'square', cropbox: cropboxOf(o) },
   });
 }
 
@@ -187,6 +205,8 @@ function syncControls(o) {
   $('screen').style.setProperty('--stretch', ASPECTS[o.aspect]);
   $('emu-screen').style.setProperty('--stretch', ASPECTS[o.aspect]);
   $('fill-row').hidden = o.fit !== 'contain';
+  $('box-row').hidden = $('box-hint').hidden = o.cropbox !== 'custom';
+  $('letterbox-row').hidden = o.cropbox === 'full';
   $('strength-row').hidden = o.dither === 'none';
   $('strength-out').textContent = o.strength.toFixed(2);
   $('sprites-out').textContent = o.sprites;
@@ -210,6 +230,12 @@ function cliCommand(o) {
   if (o.fit !== 'cover') args.push(`--fit ${o.fit}`);
   if (o.fit === 'contain' && o.fill !== '#000000') args.push(`--fill '${o.fill}'`);
   if (o.pixelArt) args.push('--resample nearest');
+  const box = cropboxOf(o);
+  if (box) {
+    const preset = Object.keys(CROPBOXES).find((k) => ['x', 'y', 'w', 'h'].every((c) => CROPBOXES[k][c] === box[c]));
+    args.push(`--cropbox ${preset ?? [box.x, box.y, box.w, box.h].join(',')}`);
+    if (o.letterbox !== '#000000') args.push(`--letterbox '${o.letterbox}'`);
+  }
   if (o.aspect !== 'square') args.push(`--aspect ${o.aspect}`);
   if (o.aspect !== 'square' && !o.warp) args.push('--warp square');
   if (o.dither !== 'none') args.push(`-d ${o.dither}`);
@@ -301,6 +327,15 @@ document.querySelectorAll('.panel input').forEach((input) => {
     convertSoon();
   });
 });
+
+// Picking a preset loads it into the custom fields, so Custom starts from it.
+document.querySelectorAll('input[name="cropbox"]').forEach((input) => input.addEventListener('change', () => {
+  if (input.value !== 'custom') setBoxInputs(CROPBOXES[input.value]);
+}));
+// Show the custom box as it is used, clamped onto the screen.
+document.querySelectorAll('.box-grid input').forEach((input) => input.addEventListener('change', () => {
+  setBoxInputs(cropboxOf(readOptions()) ?? CROPBOXES.full);
+}));
 
 $('file').addEventListener('change', (e) => {
   const file = e.target.files[0];

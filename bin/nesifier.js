@@ -4,7 +4,7 @@ import { writeFile, mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import sharp from 'sharp';
 import { readFile } from 'node:fs/promises';
-import { loadImage, nesify, savePng, ASPECTS, LAYOUT_KEY } from '../src/index.js';
+import { loadImage, nesify, savePng, parseCropbox, ASPECTS, LAYOUT_KEY } from '../src/index.js';
 import { readText } from '../src/pngtext.js';
 import { verify } from '../src/verify.js';
 import { toChr, toNametable, toPal, toOam, toJson } from '../src/export.js';
@@ -31,6 +31,11 @@ Image fitting:
       --fit <mode>          cover | contain | fill (default cover)
       --resample <kernel>   lanczos3 | nearest | cubic | mitchell (default lanczos3)
       --fill <#hex>         padding color for --fit contain (default #000000)
+      --cropbox <box>       fit the image to part of the screen: band (32x16 tiles,
+                            full width) | small (24x16 tiles, centered) | x,y,w,h in
+                            tiles | full (default)
+      --letterbox <#hex>    color around the crop box, also the default --bg
+                            (default #000000)
       --warp <mode>         pre-squeeze for a stretched display: square | ntsc | 4:3
                             (default: same as --aspect)
       --saturation <n>      saturation multiplier before conversion (default 1)
@@ -66,6 +71,8 @@ const { values, positionals } = parseArgs({
     fit: { type: 'string', default: 'cover' },
     resample: { type: 'string', default: 'lanczos3' },
     fill: { type: 'string', default: '#000000' },
+    cropbox: { type: 'string' },
+    letterbox: { type: 'string', default: '#000000' },
     warp: { type: 'string' }, // defaults to --aspect
     saturation: { type: 'string', default: '1' },
     brightness: { type: 'string', default: '1' },
@@ -148,6 +155,10 @@ async function runConvert(input) {
     scale = 2;
     log('Scanlines need at least 2 output lines per NES line; using --scale 2');
   }
+  let cropbox = null;
+  if (values.cropbox !== undefined) {
+    try { cropbox = parseCropbox(values.cropbox); } catch (err) { fail(`--cropbox: ${err.message}`); }
+  }
   const t0 = performance.now();
 
   const rgb = await loadImage(input, {
@@ -155,6 +166,8 @@ async function runConvert(input) {
     kernel: oneOf('resample', ['lanczos3', 'nearest', 'cubic', 'mitchell']),
     fill: values.fill,
     warp,
+    cropbox,
+    letterbox: values.letterbox,
     saturation: num('saturation', { min: 0, max: 10 }),
     brightness: num('brightness', { min: 0, max: 10 }),
   });
@@ -162,10 +175,13 @@ async function runConvert(input) {
   const result = nesify(rgb, {
     dither: oneOf('dither', ['none', 'ordered', 'fs']),
     strength: num('strength', { min: 0, max: 1 }),
-    bg: values.bg,
+    // The letterbox as the shared background color is in every palette, so palette
+    // areas that the crop box edge cuts through still match both sides.
+    bg: values.bg ?? (cropbox ? values.letterbox : undefined),
     bgCandidates: num('bg-candidates', { min: 1, max: NES_COLORS.length, int: true }),
     maxTiles: num('max-tiles', { min: 1, max: 256, int: true }),
     sprites: num('sprites', { min: 0, max: 64, int: true }),
+    cropbox,
   });
 
   const json = toJson(result.palettes, result.tiles.length, result.spritePalettes, result.sprites.length);

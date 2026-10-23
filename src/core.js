@@ -1,6 +1,6 @@
 // Browser-safe core: conversion, exports, ROM building and checking. Everything here
 // works on plain typed arrays; src/index.js adds Node file and image I/O on top.
-import { NES_COLORS, SCREEN_W, SCREEN_H, TILE, MAP_W, MAX_TILES, hexToRgb } from './nes.js';
+import { NES_COLORS, SCREEN_W, SCREEN_H, TILE, MAP_W, MAP_H, MAX_TILES, hexToRgb } from './nes.js';
 import { labOf, labToRgb } from './color.js';
 import { choosePalettes, nearestNes } from './palettes.js';
 import { renderIndices, blockOf } from './render.js';
@@ -22,25 +22,55 @@ export const ASPECTS = {
   '4:3': 4 / 3 / (SCREEN_W / SCREEN_H), // whole frame stretched to 4:3 (320x240)
 };
 
+// Crop box presets, in tiles: { x, y, w, h } on the 32x30 map. Edges sit on even tiles
+// so no 16x16 palette area is split between the image and the letterbox.
+export const CROPBOXES = {
+  full: { x: 0, y: 0, w: MAP_W, h: MAP_H },
+  band: { x: 0, y: 6, w: MAP_W, h: 16 }, // full-width cinematic band, like Ninja Gaiden
+  small: { x: 4, y: 6, w: 24, h: 16 }, // small centered window
+};
+
+/**
+ * Parse a crop box: a CROPBOXES name or "x,y,w,h" in tiles. Returns null for the whole
+ * screen, and throws if the box doesn't fit on it.
+ */
+export function parseCropbox(text) {
+  if (CROPBOXES[text]) return text === 'full' ? null : { ...CROPBOXES[text] };
+  const parts = String(text).split(',').map((v) => v.trim());
+  const [x, y, w, h] = parts.map(Number);
+  if (parts.length !== 4 || ![x, y, w, h].every(Number.isInteger) || x < 0 || y < 0 || w < 1 || h < 1 ||
+      x + w > MAP_W || y + h > MAP_H)
+    throw new Error(`crop box must be ${Object.keys(CROPBOXES).join(', ')} or x,y,w,h in tiles inside ${MAP_W}x${MAP_H}`);
+  return w === MAP_W && h === MAP_H ? null : { x, y, w, h };
+}
+
+/** A crop box (in tiles) as a pixel rectangle { x, y, w, h }; null means the whole screen. */
+export function cropboxPixels(box) {
+  const { x, y, w, h } = box ?? CROPBOXES.full;
+  return { x: x * TILE, y: y * TILE, w: w * TILE, h: h * TILE };
+}
+
 /**
  * Where a w x h source lands on the 256x240 screen: crop the source to (sx, sy, sw, sh)
  * and scale that into (dx, dy, dw, dh), padding the rest. With `warp` (an ASPECTS key)
  * the image is fitted to the frame as the TV shows it (256*k x 240) and squeezed
  * horizontally into 256x240, so it looks undistorted once the display stretches it.
+ * With `cropbox` (tiles, see CROPBOXES) the image is fitted to that area instead.
  */
-export function fitPlan(w, h, { fit = 'cover', warp = 'square' } = {}) {
+export function fitPlan(w, h, { fit = 'cover', warp = 'square', cropbox = null } = {}) {
   const k = ASPECTS[warp];
-  const full = { sx: 0, sy: 0, sw: w, sh: h, dx: 0, dy: 0, dw: SCREEN_W, dh: SCREEN_H };
+  const box = cropboxPixels(cropbox);
+  const full = { sx: 0, sy: 0, sw: w, sh: h, dx: box.x, dy: box.y, dw: box.w, dh: box.h };
   if (fit === 'fill') return full;
-  const frame = (SCREEN_W * k) / SCREEN_H; // displayed aspect ratio
+  const frame = (box.w * k) / box.h; // displayed aspect ratio
   if (fit === 'cover') {
     const sw = Math.min(w, Math.round(h * frame)), sh = Math.min(h, Math.round(w / frame));
     return { ...full, sx: (w - sw) >> 1, sy: (h - sh) >> 1, sw, sh };
   }
-  const s = Math.min((SCREEN_W * k) / w, SCREEN_H / h);
-  const dw = Math.min(SCREEN_W, Math.max(1, Math.round((w * s) / k)));
-  const dh = Math.min(SCREEN_H, Math.max(1, Math.round(h * s)));
-  return { ...full, dx: (SCREEN_W - dw) >> 1, dy: (SCREEN_H - dh) >> 1, dw, dh };
+  const s = Math.min((box.w * k) / w, box.h / h);
+  const dw = Math.min(box.w, Math.max(1, Math.round((w * s) / k)));
+  const dh = Math.min(box.h, Math.max(1, Math.round(h * s)));
+  return { ...full, dx: box.x + ((box.w - dw) >> 1), dy: box.y + ((box.h - dh) >> 1), dw, dh };
 }
 
 /** Scale lightness and chroma, like sharp's modulate({ brightness, saturation }). */
@@ -57,7 +87,8 @@ export function modulate(rgb, { saturation = 1, brightness = 1 } = {}) {
 /**
  * Convert a 256x240 RGB buffer into NES background data and a preview image.
  * Options: dither ('none' | 'ordered' | 'fs'), strength, bg (hex string),
- * bgCandidates, maxTiles, sprites (how many 8x8 sprites to add on top, 0-64).
+ * bgCandidates, maxTiles, sprites (how many 8x8 sprites to add on top, 0-64),
+ * cropbox (tiles; outside it the screen is a flat letterbox: no dithering, no sprites).
  */
 export function nesify(rgb, opts = {}) {
   const { dither = 'none', strength = 0.75, maxTiles = MAX_TILES, bgCandidates = 6, sprites: maxSprites = 0 } = opts;
@@ -65,9 +96,16 @@ export function nesify(rgb, opts = {}) {
   const labs = new Float32Array(N * 3);
   for (let p = 0; p < N; p++) labs.set(labOf(rgb[p * 3], rgb[p * 3 + 1], rgb[p * 3 + 2]), p * 3);
 
+  let inside = null;
+  if (opts.cropbox) {
+    const box = cropboxPixels(opts.cropbox);
+    inside = new Uint8Array(N);
+    for (let y = box.y; y < box.y + box.h; y++) inside.fill(1, y * SCREEN_W + box.x, y * SCREEN_W + box.x + box.w);
+  }
+
   const bg = opts.bg ? nearestNes(labOf(...hexToRgb(opts.bg))) : null;
   const { palettes, assign } = choosePalettes(labs, { bg, bgCandidates });
-  const { indices, targets } = renderIndices(rgb, labs, palettes, assign, { dither, strength });
+  const { indices, targets } = renderIndices(rgb, labs, palettes, assign, { dither, strength, inside });
   const { tiles, nametable, uniqueBefore, reduced } = reduceTiles(indices, targets, palettes, assign, Math.min(maxTiles, MAX_TILES));
 
   // Rebuild the screen exactly as the PPU would draw it: nametable -> pattern -> palette.
@@ -84,7 +122,11 @@ export function nesify(rgb, opts = {}) {
   let spritePalettes = [], sprites = [];
   if (maxSprites > 0) {
     const bgLabs = new Float32Array(N * 3);
-    for (let p = 0; p < N; p++) bgLabs.set(labOf(out[p * 3], out[p * 3 + 1], out[p * 3 + 2]), p * 3);
+    for (let p = 0; p < N; p++) {
+      // Outside the crop box, treat the background as perfect so no sprite goes there.
+      if (inside && !inside[p]) bgLabs.set(labs.subarray(p * 3, p * 3 + 3), p * 3);
+      else bgLabs.set(labOf(out[p * 3], out[p * 3 + 1], out[p * 3 + 2]), p * 3);
+    }
     ({ palettes: spritePalettes, sprites } = placeSprites(labs, bgLabs, Math.min(maxSprites, MAX_SPRITES)));
     for (const s of sprites) {
       for (let i = 0; i < 64; i++) {

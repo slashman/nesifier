@@ -138,3 +138,23 @@ test('library output with result.layout passes check exactly', async () => {
   assert.deepEqual(layout, r.layout);
   assert.deepEqual(verify(r.rgb, SCREEN_W, SCREEN_H, layout).errors, []);
 });
+
+test('a crop box fits the image inside it and keeps the letterbox flat', async () => {
+  const cropbox = { x: 3, y: 5, w: 20, h: 13 }; // odd edges cut through palette areas
+  const rgb = await loadImage(await noisyImage(), { cropbox, letterbox: '#203040' });
+  const inBox = (x, y) => x >= 24 && x < 184 && y >= 40 && y < 144;
+  const r = nesify(rgb, { cropbox, bg: '#203040', dither: 'ordered', sprites: 64 });
+  assert.ok(verify(r.rgb, SCREEN_W, SCREEN_H, r.layout).ok);
+  const letterbox = NES_COLORS.find((c) => c.hex === '#00323C').rgb; // nearest to #203040
+  let inside = 0;
+  for (let y = 0; y < SCREEN_H; y++) {
+    for (let x = 0; x < SCREEN_W; x++) {
+      const px = [...r.rgb.subarray((y * SCREEN_W + x) * 3, (y * SCREEN_W + x) * 3 + 3)];
+      if (inBox(x, y)) inside += px.join() !== letterbox.join();
+      else assert.deepEqual(px, letterbox, `letterbox pixel ${x},${y}`);
+    }
+  }
+  assert.ok(inside > 160 * 104 * 0.9, 'the image fills the box');
+  assert.ok(r.sprites.length > 0);
+  for (const s of r.sprites) assert.ok(s.x + 8 > 24 && s.x < 184 && s.y + 8 > 40 && s.y < 144, 'sprites stay on the image');
+});

@@ -21,17 +21,19 @@ const clamp = (v) => (v < 0 ? 0 : v > 255 ? 255 : Math.round(v));
  * Map every pixel to a 2-bit index into its block's palette.
  * Returns { indices, targets } where targets holds the Lab color each pixel should
  * ideally keep (the source color, or the dithered choice when dithering).
+ * Pixels outside `inside` (a per-pixel mask, if given) are never dithered.
  */
-export function renderIndices(rgb, labs, palettes, assign, { dither = 'none', strength = 0.75 } = {}) {
+export function renderIndices(rgb, labs, palettes, assign, { dither = 'none', strength = 0.75, inside = null } = {}) {
   const N = SCREEN_W * SCREEN_H;
   const indices = new Uint8Array(N);
   const paletteAt = (x, y) => palettes[assign[blockOf(x, y)]];
+  const plain = (p, x, y) => nearestInPalette([labs[p * 3], labs[p * 3 + 1], labs[p * 3 + 2]], paletteAt(x, y));
 
   if (dither === 'none') {
     for (let y = 0; y < SCREEN_H; y++) {
       for (let x = 0; x < SCREEN_W; x++) {
         const p = y * SCREEN_W + x;
-        indices[p] = nearestInPalette([labs[p * 3], labs[p * 3 + 1], labs[p * 3 + 2]], paletteAt(x, y));
+        indices[p] = plain(p, x, y);
       }
     }
     return { indices, targets: labs };
@@ -42,6 +44,7 @@ export function renderIndices(rgb, labs, palettes, assign, { dither = 'none', st
     for (let y = 0; y < SCREEN_H; y++) {
       for (let x = 0; x < SCREEN_W; x++) {
         const p = y * SCREEN_W + x;
+        if (inside && !inside[p]) { indices[p] = plain(p, x, y); continue; }
         const t = ((BAYER4[(y & 3) * 4 + (x & 3)] + 0.5) / 16 - 0.5) * amp;
         const lab = labOf(clamp(rgb[p * 3] + t), clamp(rgb[p * 3 + 1] + t), clamp(rgb[p * 3 + 2] + t));
         indices[p] = nearestInPalette(lab, paletteAt(x, y));
@@ -55,6 +58,7 @@ export function renderIndices(rgb, labs, palettes, assign, { dither = 'none', st
       for (let i = 0; i < SCREEN_W; i++) {
         const x = ltr ? i : SCREEN_W - 1 - i;
         const p = y * SCREEN_W + x;
+        if (inside && !inside[p]) { indices[p] = plain(p, x, y); continue; } // drops error spread into it
         const r = clamp(buf[p * 3]), g = clamp(buf[p * 3 + 1]), b = clamp(buf[p * 3 + 2]);
         const palette = paletteAt(x, y);
         const v = nearestInPalette(labOf(r, g, b), palette);

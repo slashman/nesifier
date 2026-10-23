@@ -1,6 +1,6 @@
 // Runs conversions off the main thread so the controls stay responsive.
 import {
-  fitPlan, modulate, nesify, verify, toChr, toNametable, toPal, toOam, toJson, toRom, SCREEN_W, SCREEN_H,
+  cropboxPixels, fitPlan, modulate, nesify, verify, toChr, toNametable, toPal, toOam, toJson, toRom, SCREEN_W, SCREEN_H,
 } from './src/core.js';
 
 let bitmap = null;
@@ -38,13 +38,17 @@ function areaResize(src, sw, sh, dw, dh) {
   return pass(rows, dw, sh, dh, false);
 }
 
-// Draw the image onto the 256x240 screen as planned by fitPlan, over the fill color.
-function fitToScreen(img, { fit, fill, pixelArt, warp }) {
-  let { sx, sy, sw, sh, dx, dy, dw, dh } = fitPlan(img.width, img.height, { fit, warp });
+// Draw the image onto the 256x240 screen as planned by fitPlan, over the fill color
+// inside the crop box and the letterbox color around it.
+function fitToScreen(img, { fit, fill, pixelArt, warp, cropbox, letterbox }) {
+  let { sx, sy, sw, sh, dx, dy, dw, dh } = fitPlan(img.width, img.height, { fit, warp, cropbox });
+  const box = cropboxPixels(cropbox);
   const canvas = new OffscreenCanvas(SCREEN_W, SCREEN_H);
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
-  ctx.fillStyle = fill;
+  ctx.fillStyle = letterbox;
   ctx.fillRect(0, 0, SCREEN_W, SCREEN_H);
+  ctx.fillStyle = fill;
+  ctx.fillRect(box.x, box.y, box.w, box.h);
 
   if (pixelArt) {
     ctx.imageSmoothingEnabled = false;
@@ -99,6 +103,8 @@ self.onmessage = ({ data: msg }) => {
     const source = modulate(fitToScreen(bitmap, opts), opts);
     const r = nesify(source, {
       dither: opts.dither, strength: opts.strength, sprites: opts.sprites, maxTiles: opts.maxTiles,
+      // The letterbox as the shared background color keeps the crop box edge clean.
+      cropbox: opts.cropbox, bg: opts.cropbox ? opts.letterbox : undefined,
     });
     const chr = toChr(r.tiles, r.spriteTiles);
     const nam = toNametable(r.nametable, r.assign);

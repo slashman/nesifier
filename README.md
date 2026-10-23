@@ -40,6 +40,12 @@ npx nesifier photo.jpg -d fs
 # Punch up a soft photo before converting
 npx nesifier photo.jpg --saturation 1.5
 
+# Cinematic band like Ninja Gaiden's cutscenes, leaving the rest of the screen black
+npx nesifier photo.jpg --cropbox band
+
+# A custom 20x12-tile window at tile (6, 4), on a dark blue letterbox
+npx nesifier photo.jpg --cropbox 6,4,20,12 --letterbox '#001E74'
+
 # Pixel art: keep hard edges and show the whole image
 npx nesifier sprite-sheet.png --resample nearest --fit contain
 
@@ -78,6 +84,8 @@ nesifier check <image>
 |---|---|
 | `--fit <mode>` | `cover` crops to fill the screen (default), `contain` shows the whole image with padding, `fill` stretches |
 | `--fill <#hex>` | Padding color for `--fit contain`. Default `#000000` |
+| `--cropbox <box>` | Fit the image into part of the screen instead of all of it: `band` (full width, 16 tiles tall), `small` (24×16 tiles, centered), `x,y,w,h` in 8×8 tiles, or `full` (default). `--fit` and `--warp` work on the box |
+| `--letterbox <#hex>` | Color around the crop box. It also becomes the shared background color unless you give `--bg`. Default `#000000` |
 | `--warp <mode>` | `square`, `ntsc` or `4:3`: pre-squeeze the image so it looks undistorted once a TV stretches it. Default: same as `--aspect` |
 | `--resample <kernel>` | `lanczos3` (default, photos), `nearest` (pixel art), `cubic`, `mitchell` |
 | `--saturation <n>` | Saturation multiplier before converting. Photos often look better at 1.3–1.6 |
@@ -150,13 +158,14 @@ await writeFile('photo.nes', toRom(chr, nam, pal, toOam(result.sprites)));
 
 | Function | Description |
 |---|---|
-| `loadImage(input, options)` | Load a file path or Buffer and fit it to 256×240. Options: `fit`, `kernel`, `fill`, `warp`, `saturation`, `brightness`. Returns RGB bytes |
-| `nesify(rgb, options)` | Convert 256×240 RGB bytes. Options: `dither`, `strength`, `bg`, `bgCandidates`, `maxTiles`, `sprites` (default 0, unlike the CLI). Returns `{ rgb, tiles, nametable, palettes, assign, sprites, spriteTiles, spritePalettes, layout }` |
+| `loadImage(input, options)` | Load a file path or Buffer and fit it to 256×240. Options: `fit`, `kernel`, `fill`, `warp`, `saturation`, `brightness`, `cropbox`, `letterbox`. Returns RGB bytes |
+| `nesify(rgb, options)` | Convert 256×240 RGB bytes. Options: `dither`, `strength`, `bg`, `bgCandidates`, `maxTiles`, `sprites` (default 0, unlike the CLI), `cropbox` (no dithering or sprites outside it). Returns `{ rgb, tiles, nametable, palettes, assign, sprites, spriteTiles, spritePalettes, layout }` |
 | `savePng(rgb, path, options)` | Write the preview. Options: `scale`, `aspect`, `scanlines`, `layout` |
 | `toChr(tiles, spriteTiles?)`, `toNametable(nametable, assign)`, `toPal(palettes, spritePalettes?)`, `toOam(sprites)` | Encode the NES data files |
 | `toJson(palettes, tileCount, spritePalettes?, spriteCount?)` | Palettes as hex colors and NES color numbers |
 | `toRom(chr, nam, pal, oam?)` | Build a `.nes` ROM, with sprites if `oam` is given |
 | `verify(rgb, width, height, layout?)` | Check an image against the rules. Returns `{ ok, errors, stats }` |
+| `parseCropbox(text)`, `CROPBOXES` | Crop boxes in tiles, `{ x, y, w, h }`: parse `band`, `small` or `x,y,w,h`, and the presets |
 | `NES_COLORS` | The 52 usable colors: `{ nes, hex, rgb }` |
 
 Pass `layout: result.layout` to `savePng` so the PNG records its palette arrangement for
@@ -207,6 +216,10 @@ Every conversion is checked against these rules before nesifier reports success.
   gain is smaller. Sprite tiles live in their own pattern table, so they don't use the
   background's 256-tile budget. `check` needs the sprite layout stored in nesifier's
   PNGs to verify a sprite image.
+- **Crop box edges.** Each 16×16 area has one palette, so a box edge on an odd tile
+  splits an area between the image and the letterbox. Because the letterbox color is
+  the shared background color (in every palette), that costs nothing. With `--bg` set to
+  another color it can, so keep edges on even tiles. The presets already do.
 - **Dithering costs tiles.** Dithered areas create many unique tiles, and merging them
   back down to 256 smooths some of the dithering out.
 - **Colors vary.** There's no single official NES palette; emulators and TVs differ.
